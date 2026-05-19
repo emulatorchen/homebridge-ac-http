@@ -1,7 +1,7 @@
 {
   "name": "homebridge-ac-http",
   "displayName": "AC HTTP",
-  "version": "0.0.2",
+  "version": "1.0.1",
   "description": "Homebridge plugin for any HTTP/REST-controlled air conditioner — IR blasters, ESP8266, ESP32, and any device with a REST API. Supports composed commands, templates, dual-axis swing, humidity, fan speed mapping, and custom headers.",
   "license": "MIT",
   "author": {
