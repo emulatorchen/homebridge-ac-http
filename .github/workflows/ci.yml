@@ -54,8 +54,10 @@ jobs:
         run: |
           npm install -g homebridge@^${{ matrix.hb-version }} 2>&1 | tail -3
           npm install -g homebridge-ac-http-*.tgz 2>&1 | tail -3
+          PLUGIN_PATH=$(npm root -g)/homebridge-ac-http
           node -e "
             const api = { registerPlatform: (n, alias) => { console.log('AcHttpPlatform:', alias); process.exit(0); } };
-            require('$(npm root -g)/homebridge-ac-http')(api);
+            const mod = require('$PLUGIN_PATH');
+            (mod.default || mod)(api);
           " | tee /tmp/hb.log
           grep -q "AcHttpPlatform" /tmp/hb.log
