@@ -13,6 +13,5 @@ jobs:
       - run: |
           npm deprecate homebridge-ac-http@0.0.1 "Test version, do not use"
           npm deprecate homebridge-ac-http@0.0.2 "Test version, do not use"
-          npm deprecate homebridge-ac-http@1.0.0 "Released in error — do not use"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
