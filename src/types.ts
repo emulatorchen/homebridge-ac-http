@@ -59,9 +59,10 @@ export interface AcDeviceConfig {
 }
 
 export type AcTemplateConfig = Omit<AcDeviceConfig, 'name' | 'serial' | 'model' | 'template' | 'host' | 'port'>;
+export interface AcTemplateEntry extends AcTemplateConfig { name: string; }
 
 export interface AcHttpPlatformConfig {
   platform: string;
-  templates?: Record<string, AcTemplateConfig>;
+  templates?: AcTemplateEntry[] | Record<string, AcTemplateConfig>;
   accessories: AcDeviceConfig[];
 }
