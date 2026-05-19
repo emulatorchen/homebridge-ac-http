@@ -8,10 +8,33 @@
       "templates": {
         "title": "AC Templates",
         "description": "Named templates shared across accessories. Use {host} and {port} placeholders in URLs. Accessories reference a template by name and only need to supply host/port.",
-        "type": "object",
-        "additionalProperties": {
+        "type": "array",
+        "items": {
           "type": "object",
-          "description": "Template definition — same shape as an accessory but without name/serial/model."
+          "properties": {
+            "name":         { "title": "Template Name",      "description": "Referenced by accessories using the 'template' field.",                      "type": "string", "required": true },
+            "stateUrl":     { "title": "State URL",          "description": "Base URL for characteristics with no own URL. Use {host}/{port} placeholders.", "type": "string" },
+            "pollInterval": { "title": "Poll Interval (s)",  "description": "How often to refresh state. 0 = disabled.",                                  "type": "integer", "default": 30 },
+            "setterDelay":  { "title": "Setter Delay (ms)",  "description": "Debounce delay for SET commands. 0 = immediate.",                            "type": "integer", "default": 0 },
+            "minTemp":      { "title": "Min Temperature",    "description": "Minimum target temperature in HomeKit. Default: 16°C.",                      "type": "integer", "default": 16 },
+            "maxTemp":      { "title": "Max Temperature",    "description": "Maximum target temperature in HomeKit. Default: 30°C.",                      "type": "integer", "default": 30 },
+            "command": {
+              "title": "Composed Command",
+              "description": "IR-blaster mode: one HTTP call with full AC state. Use {active}, {mode}, {temperature}, {fanSpeed}, {swingVertical}, {swingHorizontal} in body.",
+              "type": "object",
+              "properties": {
+                "url":     { "title": "URL",           "type": "string" },
+                "method":  { "title": "Method",        "type": "string", "default": "POST", "enum": ["POST","PUT","PATCH"] },
+                "body":    { "title": "Body Template", "description": "JSON body. Placeholders: {active} {mode} {temperature} {fanSpeed} {swingVertical} {swingHorizontal}.", "type": "string" },
+                "headers": { "title": "Headers",       "description": "Custom HTTP headers.", "type": "object" },
+                "timeout": { "title": "Timeout (ms)",  "type": "integer", "default": 5000 },
+                "map":     { "title": "Value Maps",    "description": "Per-field HomeKit→API string maps.", "type": "object" }
+              }
+            },
+            "swingVertical":           { "title": "Vertical Swing",  "description": "Maps to HomeKit SwingMode. Set stateless:true for IR toggle remotes.", "type": "object" },
+            "swingHorizontal":         { "title": "Horizontal Swing", "description": "Linked Switch tile. Set stateless:true for IR toggle remotes.",        "type": "object" },
+            "currentRelativeHumidity": { "title": "Humidity Sensor",  "description": "Optional humidity reading. Appears as a linked sensor tile.",          "type": "object" }
+          }
         }
       },
       "accessories": {

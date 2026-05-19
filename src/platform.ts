@@ -1,7 +1,7 @@
 import type { API, DynamicPlatformPlugin, Logger, PlatformAccessory, PlatformConfig } from 'homebridge';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import { AcHttpAccessory } from './accessory.js';
-import type { AcHttpPlatformConfig, AcDeviceConfig, AcTemplateConfig } from './types.js';
+import type { AcHttpPlatformConfig, AcDeviceConfig, AcTemplateConfig, AcTemplateEntry } from './types.js';
 
 function substituteVars(obj: unknown, vars: Record<string, string>): unknown {
   if (typeof obj === 'string') return obj.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
@@ -40,7 +40,10 @@ export class AcHttpPlatform implements DynamicPlatformPlugin {
 
   private discoverDevices(): void {
     const platformConfig = this.config as unknown as AcHttpPlatformConfig;
-    const templates      = platformConfig.templates ?? {};
+    const rawTemplates   = platformConfig.templates ?? {};
+    const templates: Record<string, AcTemplateConfig> = Array.isArray(rawTemplates)
+      ? Object.fromEntries((rawTemplates as AcTemplateEntry[]).map(t => { const { name, ...rest } = t; return [name, rest]; }))
+      : rawTemplates as Record<string, AcTemplateConfig>;
     const devices        = platformConfig.accessories ?? [];
     const seen           = new Set<string>();
 
