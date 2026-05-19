@@ -108,6 +108,7 @@ export class AcHttpAccessory {
       this.state.mode     = mode;
       this.service.updateCharacteristic(this.platform.Characteristic.Active, active);
       this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, currTemp);
+      this.service.updateCharacteristic(this.platform.Characteristic.TargetHeaterCoolerState, mode);
       this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeaterCoolerState, this.deriveCurrentState());
       if (this.cfg.currentRelativeHumidity && this.humidityService) {
         const humidity = await this.safeGet(this.resolveGet(this.cfg.currentRelativeHumidity), this.state.humidity);
@@ -219,8 +220,10 @@ export class AcHttpAccessory {
     if (this.cfg.command) {
       this.debouncedSet('temp', () => this.sendCommand());
     } else {
-      for (const c of [this.cfg.coolingThresholdTemperature, this.cfg.heatingThresholdTemperature])
-        if (c?.set) await this.safeSet(c.set, v, 'Temperature');
+      const targets = [this.cfg.coolingThresholdTemperature, this.cfg.heatingThresholdTemperature].filter(c => c?.set);
+      this.debouncedSet('temp', async () => {
+        for (const c of targets) await this.safeSet(c!.set!, v, 'Temperature');
+      });
     }
   }
 
@@ -259,7 +262,8 @@ export class AcHttpAccessory {
     } else if (this.cfg.rotationSpeed?.set) {
       const speed = percentToSpeed(v as number, this.cfg.rotationSpeed.fanSpeedMap?.valueToPercent);
       const val = this.cfg.rotationSpeed.set.setValueMap ? v : speed;
-      await this.safeSet(this.cfg.rotationSpeed.set, val, 'FanSpeed');
+      const set = this.cfg.rotationSpeed.set;
+      this.debouncedSet('fanSpeed', () => this.safeSet(set, val, 'FanSpeed'));
     }
   }
 
