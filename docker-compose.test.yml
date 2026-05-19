@@ -1,0 +1,22 @@
+services:
+  homebridge-v1:
+    image: homebridge/homebridge:legacy
+    network_mode: host
+    volumes:
+      - ./:/homebridge/node_modules/homebridge-ac-http
+      - hb1-data:/homebridge
+    environment:
+      - HOMEBRIDGE_CONFIG_UI_PORT=8581
+
+  homebridge-v2:
+    image: homebridge/homebridge:latest
+    network_mode: host
+    volumes:
+      - ./:/homebridge/node_modules/homebridge-ac-http
+      - hb2-data:/homebridge
+    environment:
+      - HOMEBRIDGE_CONFIG_UI_PORT=8582
+
+volumes:
+  hb1-data:
+  hb2-data:

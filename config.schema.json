@@ -1,0 +1,60 @@
+{
+  "pluginAlias": "AcHttpPlatform",
+  "pluginType": "platform",
+  "singular": false,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "templates": {
+        "title": "AC Templates",
+        "description": "Named templates shared across accessories. Use {host} and {port} placeholders in URLs. Accessories reference a template by name and only need to supply host/port.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "description": "Template definition — same shape as an accessory but without name/serial/model."
+        }
+      },
+      "accessories": {
+        "title": "AC Units",
+        "description": "List of AC accessories. Each can use a template and only override what differs.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name":         { "title": "Name",              "description": "Display name in HomeKit.",                          "type": "string", "required": true },
+            "serial":       { "title": "Serial Number",     "description": "Used as stable HomeKit UUID seed. Recommended.",   "type": "string" },
+            "model":        { "title": "Model",             "description": "Shown in accessory info.",                         "type": "string" },
+            "template":     { "title": "Template",          "description": "Name of a platform-level template to inherit.",    "type": "string" },
+            "host":         { "title": "Host",              "description": "Replaces {host} in template URLs.",                "type": "string" },
+            "port":         { "title": "Port",              "description": "Replaces {port} in template URLs. Default: 80.",   "type": "integer", "default": 80 },
+            "stateUrl":     { "title": "State URL",         "description": "Base URL for characteristics that have no own URL. Used as fallback for per-characteristic GET.", "type": "string" },
+            "pollInterval": { "title": "Poll Interval (s)", "description": "How often to refresh state from the device. 0 = disabled.",  "type": "integer", "default": 30 },
+            "setterDelay":  { "title": "Setter Delay (ms)", "description": "Debounce delay for SET commands. Useful for slider controls. 0 = immediate.", "type": "integer", "default": 0 },
+            "minTemp":      { "title": "Min Temperature",   "description": "Minimum target temperature in HomeKit. Default: 16°C.", "type": "integer", "default": 16 },
+            "maxTemp":      { "title": "Max Temperature",   "description": "Maximum target temperature in HomeKit. Default: 30°C.", "type": "integer", "default": 30 },
+            "command": {
+              "title": "Composed Command",
+              "description": "IR-blaster / single-shot mode: one HTTP call carrying the full AC state. Use {active}, {mode}, {temperature}, {fanSpeed}, {swingVertical}, {swingHorizontal} in body.",
+              "type": "object",
+              "properties": {
+                "url":     { "title": "URL",    "type": "string" },
+                "method":  { "title": "Method", "type": "string", "default": "POST", "enum": ["POST","PUT","PATCH"] },
+                "body":    { "title": "Body Template", "description": "JSON body template. Placeholders: {active} {mode} {temperature} {fanSpeed} {swingVertical} {swingHorizontal}.", "type": "string" },
+                "headers": { "title": "Headers", "description": "Custom HTTP headers, e.g. {\"Authorization\": \"Bearer token\"}", "type": "object" },
+                "timeout": { "title": "Timeout (ms)", "type": "integer", "default": 5000 },
+                "map": {
+                  "title": "Value Maps",
+                  "description": "Per-field mappings from HomeKit values to API strings. Keys are HomeKit values (0/1/2…), values are API strings.",
+                  "type": "object"
+                }
+              }
+            },
+            "swingVertical":  { "title": "Vertical Swing",   "description": "Maps to HomeKit SwingMode. Set stateless:true for IR toggle-only remotes.", "type": "object" },
+            "swingHorizontal":{ "title": "Horizontal Swing",  "description": "Appears as a linked Switch tile. Set stateless:true for IR toggle-only remotes.", "type": "object" },
+            "currentRelativeHumidity": { "title": "Humidity Sensor", "description": "Optional humidity reading. Appears as a linked sensor tile inside the AC accessory.", "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}

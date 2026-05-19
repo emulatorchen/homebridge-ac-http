@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: node_modules
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          scanners: vuln
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run build
+      - run: npm pack
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: plugin-tarball
+          path: homebridge-ac-http-*.tgz
+
+  validate:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - hb-image: homebridge/homebridge:latest
+            hb-label: 2.x
+          - hb-image: homebridge/homebridge:legacy
+            hb-label: 1.x
+    name: Validate on Homebridge ${{ matrix.hb-label }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: plugin-tarball
+      - name: Test plugin loads
+        run: |
+          TARBALL=$(ls homebridge-ac-http-*.tgz)
+          docker run --rm \
+            -v "$PWD/$TARBALL:/tmp/$TARBALL" \
+            "${{ matrix.hb-image }}" \
+            sh -c "
+              npm install -g /tmp/$TARBALL 2>&1 | tail -5
+              printf '{\"bridge\":{\"name\":\"Test\",\"username\":\"CC:22:3D:E3:CE:30\",\"port\":51826,\"pin\":\"123-45-678\"},\"platforms\":[{\"platform\":\"AcHttpPlatform\",\"accessories\":[]}]}' \
+                > /homebridge/config.json
+              timeout 20 homebridge --no-color 2>&1 || true
+            " | tee /tmp/hb.log
+          grep -qi "AcHttpPlatform" /tmp/hb.log
