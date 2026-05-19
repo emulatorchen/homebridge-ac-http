@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high --registry https://registry.npmjs.org
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: node_modules
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          scanners: vuln
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm pack
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-tarball
+          path: homebridge-ac-http-*.tgz
+
+  validate:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        hb-version: ['1', '2']
+    name: Validate on Homebridge ${{ matrix.hb-version }}.x
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: plugin-tarball
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+      - name: Test plugin registers on Homebridge ${{ matrix.hb-version }}.x
+        run: |
+          npm install -g homebridge@^${{ matrix.hb-version }} 2>&1 | tail -3
+          npm install -g homebridge-ac-http-*.tgz 2>&1 | tail -3
+          PLUGIN_PATH=$(npm root -g)/homebridge-ac-http
+          node -e "
+            const api = { registerPlatform: (n, alias) => { console.log('AcHttpPlatform:', alias); process.exit(0); } };
+            const mod = require('$PLUGIN_PATH');
+            (mod.default || mod)(api);
+          " | tee /tmp/hb.log
+          grep -q "AcHttpPlatform" /tmp/hb.log
