@@ -1,0 +1,34 @@
+{
+  "name": "homebridge-ac-http",
+  "displayName": "AC HTTP",
+  "version": "1.0.0",
+  "description": "Homebridge plugin for any HTTP/REST-controlled air conditioner — IR blasters, ESP8266, ESP32, and any device with a REST API. Supports composed commands, templates, dual-axis swing, humidity, fan speed mapping, and custom headers.",
+  "license": "MIT",
+  "author": { "name": "emulatorchen" },
+  "main": "dist/index.js",
+  "files": ["dist", "config.schema.json", "config.example.json"],
+  "engines": { "node": ">=18.0.0", "homebridge": ">=1.6.0" },
+  "scripts": {
+    "build":   "tsc",
+    "watch":   "tsc --watch",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "homebridge-plugin", "homebridge", "homekit", "apple-homekit",
+    "air-conditioner", "ac", "hvac", "heater", "cooler", "climate",
+    "http", "rest", "rest-api", "http-api", "restful",
+    "ir-remote", "ir-blaster", "esp8266", "esp32", "raspberry-pi",
+    "smart-home", "home-automation",
+    "heater-cooler", "thermostat",
+    "temperature", "fan-speed", "swing", "humidity"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emulatorchen/homebridge-ac-http.git"
+  },
+  "bugs":     { "url": "https://github.com/emulatorchen/homebridge-ac-http/issues" },
+  "homepage": "https://github.com/emulatorchen/homebridge-ac-http#readme",
+  "dependencies": { "axios": "^1.7.0" },
+  "devDependencies": { "homebridge": "^2.0.0", "typescript": "^5.4.0" },
+  "peerDependencies": { "homebridge": "^1.6.0 || ^2.0.0" }
+}
