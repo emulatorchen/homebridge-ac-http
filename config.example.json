@@ -9,9 +9,8 @@
     {
       "platform": "AcHttpPlatform",
 
-      "templates": [
-        {
-          "name": "maxe-rc14",
+      "templates": {
+        "maxe-rc14": {
           "pollInterval": 0,
           "minTemp": 16,
           "maxTemp": 30,
@@ -33,8 +32,7 @@
           "swingVertical": { "stateless": true }
         },
 
-        {
-          "name": "mitsubishi-rest",
+        "mitsubishi-rest": {
           "pollInterval": 30,
           "minTemp": 16,
           "maxTemp": 31,
@@ -71,7 +69,7 @@
             "get": { "jsonPath": "$.humidity" }
           }
         }
-      ],
+      },
 
       "accessories": [
         {

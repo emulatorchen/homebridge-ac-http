@@ -215,12 +215,13 @@ export class AcHttpAccessory {
     );
   }
   async setTemp(v: CharacteristicValue): Promise<void> {
-    this.state.temp = v as number;
+    this.state.temp = this.state.currTemp = v as number;
     if (this.cfg.command) {
       this.debouncedSet('temp', () => this.sendCommand());
     } else {
       for (const c of [this.cfg.coolingThresholdTemperature, this.cfg.heatingThresholdTemperature])
         if (c?.set) await this.safeSet(c.set, v, 'Temperature');
+      this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, this.state.currTemp);
     }
   }
 
