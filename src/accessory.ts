@@ -130,9 +130,13 @@ export class AcHttpAccessory {
           this.swingModeServices.push(svc);
         }
       } else if (this.cfg.swingVertical.stateless) {
-        // Stateless: SwingMode in top panel — fires command on tap, resets to OFF
-        this.service.getCharacteristic(platform.Characteristic.SwingMode)
-          .onGet(() => 0)
+        // Stateless: linked Switch tile — fires command on tap, resets to OFF after 300ms
+        const swingLabel = this.cfg.swingVertical.label ?? i18n.swing;
+        const swingSvc = this.accessory.getService(`${this.cfg.name} ${swingLabel}`)
+          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'swing-trigger');
+        swingSvc.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
+        swingSvc.getCharacteristic(platform.Characteristic.On)
+          .onGet(() => false)
           .onSet(async (v: CharacteristicValue) => {
             if (!v) return;
             this.state.swingVertical = 1;
@@ -141,9 +145,10 @@ export class AcHttpAccessory {
               else if (this.cfg.swingVertical?.set) await this.safeSet(this.cfg.swingVertical.set, 1, 'SwingVertical');
             } finally {
               this.state.swingVertical = 0;
-              setTimeout(() => this.service.updateCharacteristic(this.platform.Characteristic.SwingMode, 0), 300);
+              setTimeout(() => swingSvc.updateCharacteristic(this.platform.Characteristic.On, false), 300);
             }
           });
+        this.service.addLinkedService(swingSvc);
       } else {
         // Stateful: normal SwingMode toggle in top panel
         this.service.getCharacteristic(platform.Characteristic.SwingMode)
