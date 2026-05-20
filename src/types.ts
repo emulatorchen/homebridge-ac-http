@@ -13,6 +13,7 @@ export interface SwingConfig {
   get?: EndpointConfig;
   set?: EndpointConfig;
   stateless?: boolean;
+  modes?: string[];  // radio-button labels (stateless only); index = state value used in command map
 }
 
 export interface FanSpeedConfig {
@@ -55,7 +56,7 @@ export interface AcDeviceConfig {
   heatingThresholdTemperature?: { get?: EndpointConfig; set?: EndpointConfig };
   swingVertical?:               SwingConfig;
   swingHorizontal?:             SwingConfig;
-  rotationSpeed?:               { get?: EndpointConfig; set?: EndpointConfig; fanSpeedMap?: FanSpeedConfig };
+  rotationSpeed?:               { get?: EndpointConfig; set?: EndpointConfig; fanSpeedMap?: FanSpeedConfig; autoSwitch?: boolean; speeds?: string[] };
 }
 
 export type AcTemplateConfig = Omit<AcDeviceConfig, 'name' | 'serial' | 'model' | 'template' | 'host' | 'port'>;
