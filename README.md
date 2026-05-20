@@ -17,6 +17,7 @@
 - **Custom HTTP headers** — Bearer tokens, API keys, Basic auth
 - **Setter debounce** — prevents slider spam from flooding the AC controller
 - **Configurable temperature range** — override the default 16–30°C for your region
+- **Localised tile labels** — pick a language (`en` `ja` `zh-CN` `zh-TW` `ko` `de` `fr` `es` `it` `pt` `nl`) or set your own
 - **All HTTP methods** — GET, POST, PUT, PATCH, DELETE
 - **Flexible response parsing** — JSONPath extraction, bidirectional value maps
 
@@ -122,6 +123,58 @@ Body template placeholders:
 
 When `command` is configured, all SET operations use it. Individual characteristic `set` endpoints are ignored (but `get` endpoints still work for state polling).
 
+#### What the plugin actually sends
+
+When you change something in Home — say, switching to Cool mode at 24°C — the plugin builds the full AC state from memory and sends one HTTP request:
+
+```
+PUT http://192.168.1.10/api/ir
+Content-Type: application/json
+
+{
+  "power": "on",
+  "mode": "cool",
+  "temp": 24,
+  "fan": "auto",
+  "vswing": "off",
+  "hswing": "off"
+}
+```
+
+A `200 OK` with any body (or empty body) means success. Non-2xx responses are logged as errors in the Homebridge log.
+
+#### What the plugin reads for state polling
+
+If you configure `stateUrl` (or per-characteristic `get` endpoints), the plugin fetches the current state on a timer and updates HomeKit. Your device needs to return JSON that you can point a `jsonPath` at:
+
+```
+GET http://192.168.1.10/api/status
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "power": "on",
+  "mode": "cool",
+  "setpoint": 24,
+  "room_temp": 26.5,
+  "humidity": 62,
+  "fan": "auto"
+}
+```
+
+Then in config:
+```json
+"stateUrl": "http://192.168.1.10/api/status",
+"active":                      { "get": { "jsonPath": "$.power",    "valueMap": { "on": "1", "off": "0" } } },
+"targetHeaterCoolerState":     { "get": { "jsonPath": "$.mode",     "valueMap": { "auto": "0", "heat": "1", "cool": "2" } } },
+"currentTemperature":          { "get": { "jsonPath": "$.room_temp" } },
+"currentRelativeHumidity":     { "get": { "jsonPath": "$.humidity"  } },
+"coolingThresholdTemperature": { "get": { "jsonPath": "$.setpoint"  } }
+```
+
+`jsonPath` uses dot notation starting with `$` — `$.room_temp` extracts the `room_temp` field, `$.data.temp` goes one level deeper, and so on.
+
 ### Mode B: Granular REST API
 
 For devices that accept individual property commands:
@@ -152,15 +205,18 @@ For devices that accept individual property commands:
 }
 ```
 
-### Templates: DRY Multi-AC Setup
+### Same AC Model in Multiple Rooms
 
-Define endpoint config once per AC model and share across rooms:
+If you have the same AC (or IR blaster) in several rooms, you only need to write the configuration once. Put the shared settings in `templates` under a name you choose, then each room's accessory just says which template to use and supplies its own IP address.
+
+Anywhere you write `{host}` or `{port}` in a URL inside the template, the plugin fills it in from each accessory's `host` / `port` field.
 
 ```json
 {
   "platform": "AcHttpPlatform",
-  "templates": {
-    "my-ir-blaster": {
+  "templates": [
+    {
+      "name": "my-ir-blaster",
       "command": {
         "url": "http://{host}/api/send",
         "method": "POST",
@@ -175,7 +231,7 @@ Define endpoint config once per AC model and share across rooms:
       "minTemp": 16,
       "maxTemp": 30
     }
-  },
+  ],
   "accessories": [
     { "name": "Living Room AC", "serial": "LR-001", "template": "my-ir-blaster", "host": "192.168.1.10" },
     { "name": "Bedroom AC",     "serial": "BR-001", "template": "my-ir-blaster", "host": "192.168.1.11" },
@@ -184,14 +240,18 @@ Define endpoint config once per AC model and share across rooms:
 }
 ```
 
+Each accessory inherits everything from the template. You can override any individual field directly on the accessory — it takes priority over the template value.
+```
+
 ## Full Config Reference
 
 ### Platform
 
-| Field       | Type   | Default | Description |
-|-------------|--------|---------|-------------|
-| `templates` | object | —       | Named templates. Keys are template names. |
-| `accessories` | array | —     | List of AC accessories. |
+| Field         | Type   | Default | Description |
+|---------------|--------|---------|-------------|
+| `language`    | string | `en`    | Language for tile labels. Options: `en` `ja` `zh-CN` `zh-TW` `ko` `de` `fr` `es` `it` `pt` `nl` |
+| `templates`   | array  | —       | Shared AC model configs. Each entry needs a `name` field. |
+| `accessories` | array  | —       | List of AC accessories. |
 
 ### Accessory / Template
 
@@ -229,7 +289,9 @@ Define endpoint config once per AC model and share across rooms:
 |------------|---------|---------|-------------|
 | `get`      | object  | —       | EndpointConfig for reading state. |
 | `set`      | object  | —       | EndpointConfig for setting state (non-command mode). |
-| `stateless`| boolean | false   | Skip GET; fire every SET regardless of current state. Use for IR toggles. |
+| `stateless`| boolean | false   | Momentary trigger: fires every tap, resets to OFF, no state polling needed. Use for IR toggles. |
+| `modes`    | array   | —       | (Stateless only) Radio-button labels — one Switch tile per entry. |
+| `label`    | string  | language default | Override the tile name suffix (e.g. `"スイング"`). |
 
 ## Local Testing
 
