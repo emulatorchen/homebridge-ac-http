@@ -23,14 +23,17 @@
               "active":        { "0": "off",  "1": "on"   },
               "mode":          { "0": "auto", "1": "heat", "2": "cool" },
               "fanSpeed":      { "0": "auto", "20": "1",  "40": "2",  "60": "3", "80": "4", "100": "5" },
-              "swingVertical": { "0": "off",  "1": "on"   }
+              "swingVertical": { "0": "off", "1": "on" }
             }
           },
           "currentTemperature": {
             "get": { "jsonPath": "$.temperature" }
           },
           "stateUrl": "http://{host}/api/status",
-          "swingVertical": { "stateless": true }
+          "swingVertical": { "stateless": true },
+          "rotationSpeed": {
+            "autoSwitch": true
+          }
         },
 
         {

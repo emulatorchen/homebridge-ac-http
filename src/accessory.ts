@@ -24,11 +24,14 @@ export class AcHttpAccessory {
   private readonly service: Service;
   private readonly log: Logger;
   private readonly cfg: AcDeviceConfig;
-  private state = { active: 0, mode: 0, currTemp: 25, temp: 24, swingVertical: 0, swingHorizontal: 0, fanSpeed: 0, humidity: 50 };
+  private state = { active: 0, mode: 0, currTemp: 25, temp: 24, swingVertical: 0, swingHorizontal: 0, fanSpeed: 0, fanSpeedMode: 'auto', humidity: 50 };
   private pollTimer?: ReturnType<typeof setInterval>;
   private readonly setTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private humidityService?: Service;
   private hSwingService?: Service;
+  private fanAutoService?: Service;
+  private fanSpeedServices?: Service[];
+  private swingModeServices?: Service[];
 
   constructor(private readonly platform: AcHttpPlatform, private readonly accessory: PlatformAccessory) {
     this.log = platform.log;
@@ -64,14 +67,77 @@ export class AcHttpAccessory {
         .setProps({ minValue: minTemp, maxValue: maxTemp, minStep: 1 })
         .onGet(this.getTemp.bind(this)).onSet(this.setTemp.bind(this));
 
-    if (this.cfg.swingVertical)
-      this.service.getCharacteristic(platform.Characteristic.SwingMode)
-        .onGet(this.getSwingVertical.bind(this)).onSet(this.setSwingVertical.bind(this));
+    if (this.cfg.swingVertical) {
+      if (this.cfg.swingVertical.stateless && this.cfg.swingVertical.modes?.length) {
+        this.swingModeServices = [];
+        for (let i = 0; i < this.cfg.swingVertical.modes.length; i++) {
+          const label = `${this.cfg.name} Swing ${this.cfg.swingVertical.modes[i]}`;
+          const svc = this.accessory.getService(label)
+            ?? this.accessory.addService(platform.Service.Switch, label, `swing-mode-${i}`);
+          const idx = i;
+          svc.getCharacteristic(platform.Characteristic.On)
+            .onGet(() => this.state.swingVertical === idx)
+            .onSet((v: CharacteristicValue) => this.setSwingMode(idx, v as boolean));
+          this.service.addLinkedService(svc);
+          this.swingModeServices.push(svc);
+        }
+      } else if (this.cfg.swingVertical.stateless) {
+        // Momentary trigger button — no persistent state
+        const swingSvc = this.accessory.getService(`${this.cfg.name} Swing`)
+          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} Swing`, 'swing-trigger');
+        swingSvc.getCharacteristic(platform.Characteristic.On)
+          .onGet(() => false)
+          .onSet(async (v: CharacteristicValue) => {
+            if (!v) return;
+            this.state.swingVertical = 1;
+            try {
+              if (this.cfg.command) await this.sendCommand();
+              else if (this.cfg.swingVertical?.set) await this.safeSet(this.cfg.swingVertical.set, 1, 'SwingVertical');
+            } finally {
+              this.state.swingVertical = 0;
+              swingSvc.updateCharacteristic(this.platform.Characteristic.On, false);
+            }
+          });
+        this.service.addLinkedService(swingSvc);
+      } else {
+        this.service.getCharacteristic(platform.Characteristic.SwingMode)
+          .onGet(this.getSwingVertical.bind(this)).onSet(this.setSwingVertical.bind(this));
+      }
+    }
 
-    if (this.cfg.rotationSpeed)
-      this.service.getCharacteristic(platform.Characteristic.RotationSpeed)
-        .setProps({ minValue: 0, maxValue: 100, minStep: 1 })
-        .onGet(this.getFanSpeed.bind(this)).onSet(this.setFanSpeed.bind(this));
+    if (this.cfg.rotationSpeed) {
+      if (this.cfg.rotationSpeed.speeds?.length) {
+        // Discrete mode: radio button Switch services, no RotationSpeed slider
+        this.fanSpeedServices = [];
+        const speedOptions = this.cfg.rotationSpeed.autoSwitch
+          ? ['auto', ...this.cfg.rotationSpeed.speeds]
+          : [...this.cfg.rotationSpeed.speeds];
+        this.state.fanSpeedMode = speedOptions[0];
+        for (const opt of speedOptions) {
+          const label = `${this.cfg.name} Fan ${opt}`;
+          const svc = this.accessory.getService(label)
+            ?? this.accessory.addService(platform.Service.Switch, label, `fan-${opt}`);
+          const captured = opt;
+          svc.getCharacteristic(platform.Characteristic.On)
+            .onGet(() => this.state.fanSpeedMode === captured)
+            .onSet((v: CharacteristicValue) => this.setFanSpeedDiscrete(captured, v as boolean));
+          this.service.addLinkedService(svc);
+          this.fanSpeedServices.push(svc);
+        }
+      } else {
+        // Slider mode
+        this.service.getCharacteristic(platform.Characteristic.RotationSpeed)
+          .setProps({ minValue: 0, maxValue: 100, minStep: 1 })
+          .onGet(this.getFanSpeed.bind(this)).onSet(this.setFanSpeed.bind(this));
+        if (this.cfg.rotationSpeed.autoSwitch) {
+          this.fanAutoService = this.accessory.getService(`${this.cfg.name} Fan Auto`)
+            ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} Fan Auto`, 'fan-auto');
+          this.fanAutoService.getCharacteristic(platform.Characteristic.On)
+            .onGet(this.getFanAuto.bind(this)).onSet(this.setFanAuto.bind(this));
+          this.service.addLinkedService(this.fanAutoService);
+        }
+      }
+    }
 
     if (this.cfg.currentRelativeHumidity) {
       this.humidityService = this.accessory.getService(platform.Service.HumiditySensor)
@@ -128,7 +194,7 @@ export class AcHttpAccessory {
 
   private async safeGet(ep: EndpointConfig | null, fallback: number): Promise<number> {
     if (!ep) return fallback;
-    try { return await httpGet(ep); }
+    try { const v = await httpGet(ep); return isNaN(v) ? fallback : v; }
     catch (err) { this.log.warn(`[${this.cfg.name}] GET failed:`, (err as Error).message); return fallback; }
   }
 
@@ -161,9 +227,11 @@ export class AcHttpAccessory {
       active:          applyMap(String(this.state.active),          map.active),
       mode:            applyMap(String(this.state.mode),            map.mode),
       temperature:     String(this.state.temp),
-      fanSpeed:        map.fanSpeed
-        ? thresholdMap(this.state.fanSpeed, map.fanSpeed)
-        : percentToSpeed(this.state.fanSpeed, this.cfg.rotationSpeed?.fanSpeedMap?.valueToPercent),
+      fanSpeed:        this.cfg.rotationSpeed?.speeds?.length
+        ? this.state.fanSpeedMode
+        : (map.fanSpeed
+            ? thresholdMap(this.state.fanSpeed, map.fanSpeed)
+            : percentToSpeed(this.state.fanSpeed, this.cfg.rotationSpeed?.fanSpeedMap?.valueToPercent)),
       swingVertical:   applyMap(String(this.state.swingVertical),   map.swingVertical),
       swingHorizontal: applyMap(String(this.state.swingHorizontal), map.swingHorizontal),
     };
@@ -260,6 +328,8 @@ export class AcHttpAccessory {
   }
   async setFanSpeed(v: CharacteristicValue): Promise<void> {
     this.state.fanSpeed = v as number;
+    if (this.fanAutoService)
+      this.fanAutoService.updateCharacteristic(this.platform.Characteristic.On, (v as number) === 0);
     if (this.cfg.command) {
       this.debouncedSet('fanSpeed', () => this.sendCommand());
     } else if (this.cfg.rotationSpeed?.set) {
@@ -272,6 +342,70 @@ export class AcHttpAccessory {
 
   async getHumidity(): Promise<CharacteristicValue> {
     return this.state.humidity = await this.safeGet(this.resolveGet(this.cfg.currentRelativeHumidity), this.state.humidity);
+  }
+
+  async setFanSpeedDiscrete(value: string, on: boolean): Promise<void> {
+    if (!on) {
+      // radio button: can't deselect — snap back to current selection
+      const idx = this.fanSpeedServices!.findIndex((_, i) => {
+        const opts = this.cfg.rotationSpeed!.autoSwitch
+          ? ['auto', ...this.cfg.rotationSpeed!.speeds!]
+          : this.cfg.rotationSpeed!.speeds!;
+        return opts[i] === value;
+      });
+      if (idx >= 0) this.fanSpeedServices![idx].updateCharacteristic(this.platform.Characteristic.On, true);
+      return;
+    }
+    this.state.fanSpeedMode = value;
+    const allOptions = this.cfg.rotationSpeed!.autoSwitch
+      ? ['auto', ...this.cfg.rotationSpeed!.speeds!]
+      : this.cfg.rotationSpeed!.speeds!;
+    for (let i = 0; i < this.fanSpeedServices!.length; i++) {
+      if (allOptions[i] !== value)
+        this.fanSpeedServices![i].updateCharacteristic(this.platform.Characteristic.On, false);
+    }
+    if (this.cfg.command) {
+      this.debouncedSet('fanSpeed', () => this.sendCommand());
+    } else if (this.cfg.rotationSpeed?.set) {
+      const set = this.cfg.rotationSpeed.set;
+      this.debouncedSet('fanSpeed', () => this.safeSet(set, value, 'FanSpeed'));
+    }
+  }
+
+  async getFanAuto(): Promise<CharacteristicValue> {
+    return this.state.fanSpeed === 0;
+  }
+  async setFanAuto(v: CharacteristicValue): Promise<void> {
+    const auto = v as boolean;
+    if (auto) {
+      this.state.fanSpeed = 0;
+      this.service.updateCharacteristic(this.platform.Characteristic.RotationSpeed, 0);
+    } else if (this.state.fanSpeed === 0) {
+      this.state.fanSpeed = 20;
+      this.service.updateCharacteristic(this.platform.Characteristic.RotationSpeed, 20);
+    }
+    if (this.cfg.command) {
+      this.debouncedSet('fanSpeed', () => this.sendCommand());
+    } else if (this.cfg.rotationSpeed?.set) {
+      const speed = percentToSpeed(this.state.fanSpeed, this.cfg.rotationSpeed.fanSpeedMap?.valueToPercent);
+      const val = this.cfg.rotationSpeed.set.setValueMap ? this.state.fanSpeed : speed;
+      const set = this.cfg.rotationSpeed.set;
+      this.debouncedSet('fanSpeed', () => this.safeSet(set, val, 'FanSpeed'));
+    }
+  }
+
+  async setSwingMode(index: number, on: boolean): Promise<void> {
+    if (!on) {
+      // radio buttons can't be deselected — snap back
+      this.swingModeServices![index].updateCharacteristic(this.platform.Characteristic.On, true);
+      return;
+    }
+    this.state.swingVertical = index;
+    for (let i = 0; i < this.swingModeServices!.length; i++) {
+      if (i !== index) this.swingModeServices![i].updateCharacteristic(this.platform.Characteristic.On, false);
+    }
+    if (this.cfg.command) await this.sendCommand();
+    else if (this.cfg.swingVertical?.set) await this.safeSet(this.cfg.swingVertical.set, index, 'SwingVertical');
   }
 
   onDestroy(): void {
