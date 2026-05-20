@@ -47,8 +47,10 @@ export class AcHttpPlatform implements DynamicPlatformPlugin {
     const devices        = platformConfig.accessories ?? [];
     const seen           = new Set<string>();
 
+    const platformLanguage = platformConfig.language;
     for (const rawCfg of devices) {
-      const cfg  = resolveTemplate(rawCfg, templates);
+      const resolved = resolveTemplate(rawCfg, templates);
+      const cfg = (platformLanguage && !resolved.language) ? { ...resolved, language: platformLanguage } : resolved;
       const uuid = this.api.hap.uuid.generate(cfg.serial ?? cfg.name);
       seen.add(uuid);
       const existing = this.accessories.get(uuid);
