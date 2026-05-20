@@ -75,48 +75,6 @@ export class AcHttpAccessory {
         .setProps({ minValue: minTemp, maxValue: maxTemp, minStep: 1 })
         .onGet(this.getTemp.bind(this)).onSet(this.setTemp.bind(this));
 
-    if (this.cfg.swingVertical) {
-      if (this.cfg.swingVertical.stateless && this.cfg.swingVertical.modes?.length) {
-        this.swingModeServices = [];
-        const swingLabel = this.cfg.swingVertical.label ?? i18n.swing;
-        for (let i = 0; i < this.cfg.swingVertical.modes.length; i++) {
-          const label = `${this.cfg.name} ${swingLabel} ${this.cfg.swingVertical.modes[i]}`;
-          const svc = this.accessory.getService(label)
-            ?? this.accessory.addService(platform.Service.Switch, label, `swing-mode-${i}`);
-          svc.setCharacteristic(platform.Characteristic.ConfiguredName, label);
-          const idx = i;
-          svc.getCharacteristic(platform.Characteristic.On)
-            .onGet(() => this.state.swingVertical === idx)
-            .onSet((v: CharacteristicValue) => this.setSwingMode(idx, v as boolean));
-          this.service.addLinkedService(svc);
-          this.swingModeServices.push(svc);
-        }
-      } else if (this.cfg.swingVertical.stateless) {
-        // Momentary trigger button — no persistent state
-        const swingLabel = this.cfg.swingVertical.label ?? i18n.swing;
-        const swingSvc = this.accessory.getService(`${this.cfg.name} ${swingLabel}`)
-          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'swing-trigger');
-        swingSvc.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
-        swingSvc.getCharacteristic(platform.Characteristic.On)
-          .onGet(() => false)
-          .onSet(async (v: CharacteristicValue) => {
-            if (!v) return;
-            this.state.swingVertical = 1;
-            try {
-              if (this.cfg.command) await this.sendCommand();
-              else if (this.cfg.swingVertical?.set) await this.safeSet(this.cfg.swingVertical.set, 1, 'SwingVertical');
-            } finally {
-              this.state.swingVertical = 0;
-              setTimeout(() => swingSvc.updateCharacteristic(this.platform.Characteristic.On, false), 300);
-            }
-          });
-        this.service.addLinkedService(swingSvc);
-      } else {
-        this.service.getCharacteristic(platform.Characteristic.SwingMode)
-          .onGet(this.getSwingVertical.bind(this)).onSet(this.setSwingVertical.bind(this));
-      }
-    }
-
     if (this.cfg.rotationSpeed) {
       if (this.cfg.rotationSpeed.speeds?.length) {
         // Discrete mode: radio button Switch services, no RotationSpeed slider
@@ -151,6 +109,45 @@ export class AcHttpAccessory {
             .onGet(this.getFanAuto.bind(this)).onSet(this.setFanAuto.bind(this));
           this.service.addLinkedService(this.fanAutoService);
         }
+      }
+    }
+
+    if (this.cfg.swingVertical) {
+      if (this.cfg.swingVertical.stateless && this.cfg.swingVertical.modes?.length) {
+        // Radio buttons (stateless + explicit mode list) — linked switches
+        this.swingModeServices = [];
+        const swingLabel = this.cfg.swingVertical.label ?? i18n.swing;
+        for (let i = 0; i < this.cfg.swingVertical.modes.length; i++) {
+          const label = `${this.cfg.name} ${swingLabel} ${this.cfg.swingVertical.modes[i]}`;
+          const svc = this.accessory.getService(label)
+            ?? this.accessory.addService(platform.Service.Switch, label, `swing-mode-${i}`);
+          svc.setCharacteristic(platform.Characteristic.ConfiguredName, label);
+          const idx = i;
+          svc.getCharacteristic(platform.Characteristic.On)
+            .onGet(() => this.state.swingVertical === idx)
+            .onSet((v: CharacteristicValue) => this.setSwingMode(idx, v as boolean));
+          this.service.addLinkedService(svc);
+          this.swingModeServices.push(svc);
+        }
+      } else if (this.cfg.swingVertical.stateless) {
+        // Stateless: SwingMode in top panel — fires command on tap, resets to OFF
+        this.service.getCharacteristic(platform.Characteristic.SwingMode)
+          .onGet(() => 0)
+          .onSet(async (v: CharacteristicValue) => {
+            if (!v) return;
+            this.state.swingVertical = 1;
+            try {
+              if (this.cfg.command) await this.sendCommand();
+              else if (this.cfg.swingVertical?.set) await this.safeSet(this.cfg.swingVertical.set, 1, 'SwingVertical');
+            } finally {
+              this.state.swingVertical = 0;
+              setTimeout(() => this.service.updateCharacteristic(this.platform.Characteristic.SwingMode, 0), 300);
+            }
+          });
+      } else {
+        // Stateful: normal SwingMode toggle in top panel
+        this.service.getCharacteristic(platform.Characteristic.SwingMode)
+          .onGet(this.getSwingVertical.bind(this)).onSet(this.setSwingVertical.bind(this));
       }
     }
 
