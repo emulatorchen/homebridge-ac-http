@@ -20,6 +20,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
+    "test": "vitest run",
     "prepare": "npm run build"
   },
   "keywords": [
@@ -65,7 +66,8 @@
   },
   "devDependencies": {
     "homebridge": "^2.0.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.6"
   },
   "peerDependencies": {
     "homebridge": "^1.6.0 || ^2.0.0"
