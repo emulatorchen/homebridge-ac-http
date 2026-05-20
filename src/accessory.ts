@@ -2,6 +2,7 @@ import type { PlatformAccessory, Service, CharacteristicValue, Logger } from 'ho
 import type { AcHttpPlatform } from './platform.js';
 import type { AcDeviceConfig, EndpointConfig } from './types.js';
 import { httpGet, httpSet, applyMap } from './http-client.js';
+import { getLabels } from './i18n.js';
 import axios from 'axios';
 
 export const DEFAULT_FAN_MAP: [number, string][] = [[0,'auto'],[20,'1'],[40,'2'],[60,'3'],[80,'4'],[100,'5']];
@@ -53,6 +54,7 @@ export class AcHttpAccessory {
     this.service = this.accessory.getService(platform.Service.HeaterCooler)
       ?? this.accessory.addService(platform.Service.HeaterCooler);
     this.service.setCharacteristic(platform.Characteristic.Name, this.cfg.name);
+    const i18n = getLabels(this.cfg.language);
 
     this.service.getCharacteristic(platform.Characteristic.Active)
       .onGet(this.getActive.bind(this)).onSet(this.setActive.bind(this));
@@ -76,7 +78,7 @@ export class AcHttpAccessory {
     if (this.cfg.swingVertical) {
       if (this.cfg.swingVertical.stateless && this.cfg.swingVertical.modes?.length) {
         this.swingModeServices = [];
-        const swingLabel = this.cfg.swingVertical.label ?? 'Swing';
+        const swingLabel = this.cfg.swingVertical.label ?? i18n.swing;
         for (let i = 0; i < this.cfg.swingVertical.modes.length; i++) {
           const label = `${this.cfg.name} ${swingLabel} ${this.cfg.swingVertical.modes[i]}`;
           const svc = this.accessory.getService(label)
@@ -91,7 +93,7 @@ export class AcHttpAccessory {
         }
       } else if (this.cfg.swingVertical.stateless) {
         // Momentary trigger button — no persistent state
-        const swingLabel = this.cfg.swingVertical.label ?? 'Swing';
+        const swingLabel = this.cfg.swingVertical.label ?? i18n.swing;
         const swingSvc = this.accessory.getService(`${this.cfg.name} ${swingLabel}`)
           ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'swing-trigger');
         swingSvc.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
@@ -141,7 +143,7 @@ export class AcHttpAccessory {
           .setProps({ minValue: 0, maxValue: 100, minStep: 1 })
           .onGet(this.getFanSpeed.bind(this)).onSet(this.setFanSpeed.bind(this));
         if (this.cfg.rotationSpeed.autoSwitch) {
-          const autoLabel = this.cfg.rotationSpeed.autoSwitchLabel ?? 'Fan Auto';
+          const autoLabel = this.cfg.rotationSpeed.autoSwitchLabel ?? i18n.fanAuto;
           this.fanAutoService = this.accessory.getService(`${this.cfg.name} ${autoLabel}`)
             ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${autoLabel}`, 'fan-auto');
           this.fanAutoService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${autoLabel}`);
@@ -155,14 +157,15 @@ export class AcHttpAccessory {
     if (this.cfg.currentRelativeHumidity) {
       this.humidityService = this.accessory.getService(platform.Service.HumiditySensor)
         ?? this.accessory.addService(platform.Service.HumiditySensor);
-      this.humidityService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} Humidity`);
+      const humidityLabel = this.cfg.currentRelativeHumidity?.label ?? i18n.humidity;
+      this.humidityService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${humidityLabel}`);
       this.humidityService.getCharacteristic(platform.Characteristic.CurrentRelativeHumidity)
         .onGet(this.getHumidity.bind(this));
       this.service.addLinkedService(this.humidityService);
     }
 
     if (this.cfg.swingHorizontal) {
-      const hSwingLabel = this.cfg.swingHorizontal.label ?? 'H-Swing';
+      const hSwingLabel = this.cfg.swingHorizontal.label ?? i18n.hSwing;
       this.hSwingService = this.accessory.getService(`${this.cfg.name} ${hSwingLabel}`)
         ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${hSwingLabel}`, 'hswing');
       this.hSwingService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${hSwingLabel}`);

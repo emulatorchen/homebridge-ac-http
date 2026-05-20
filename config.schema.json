@@ -5,6 +5,14 @@
   "schema": {
     "type": "object",
     "properties": {
+      "language": {
+        "title": "Language",
+        "description": "Language for default tile labels (Swing, Fan Auto, Humidity, etc.). Individual labels can still be overridden per-accessory. Supported: en, ja, zh-CN, zh-TW, ko, de, fr, es, it, pt, nl.",
+        "type": "string",
+        "default": "en",
+        "enum": ["en", "ja", "zh-CN", "zh-TW", "ko", "de", "fr", "es", "it", "pt", "nl"],
+        "enumNames": ["English", "日本語", "简体中文", "繁體中文", "한국어", "Deutsch", "Français", "Español", "Italiano", "Português", "Nederlands"]
+      },
       "templates": {
         "title": "AC Templates",
         "description": "Named templates shared across accessories. Use {host} and {port} placeholders in URLs. Accessories reference a template by name and only need to supply host/port.",

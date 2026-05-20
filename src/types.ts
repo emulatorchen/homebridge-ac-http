@@ -43,6 +43,7 @@ export interface AcDeviceConfig {
   host?: string;
   port?: number;
   template?: string;
+  language?: string;
   stateUrl?: string;
   pollInterval?: number;
   setterDelay?: number;
@@ -52,7 +53,7 @@ export interface AcDeviceConfig {
   active?:                      { get?: EndpointConfig; set?: EndpointConfig };
   targetHeaterCoolerState?:     { get?: EndpointConfig; set?: EndpointConfig };
   currentTemperature?:          { get?: EndpointConfig };
-  currentRelativeHumidity?:     { get?: EndpointConfig };
+  currentRelativeHumidity?:     { get?: EndpointConfig; label?: string };
   coolingThresholdTemperature?: { get?: EndpointConfig; set?: EndpointConfig };
   heatingThresholdTemperature?: { get?: EndpointConfig; set?: EndpointConfig };
   swingVertical?:               SwingConfig;
@@ -65,6 +66,7 @@ export interface AcTemplateEntry extends AcTemplateConfig { name: string; }
 
 export interface AcHttpPlatformConfig {
   platform: string;
+  language?: string;
   templates?: AcTemplateEntry[] | Record<string, AcTemplateConfig>;
   accessories: AcDeviceConfig[];
 }
