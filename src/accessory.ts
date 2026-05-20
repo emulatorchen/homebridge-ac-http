@@ -35,6 +35,7 @@ export class AcHttpAccessory {
   private pollTimer?: ReturnType<typeof setInterval>;
   private readonly setTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private humidityService?: Service;
+  private swingService?: Service;
   private hSwingService?: Service;
   private fanAutoService?: Service;
   private fanSpeedServices?: Service[];
@@ -101,7 +102,7 @@ export class AcHttpAccessory {
           .setProps({ minValue: 0, maxValue: 100, minStep: 1 })
           .onGet(this.getFanSpeed.bind(this)).onSet(this.setFanSpeed.bind(this));
         if (this.cfg.rotationSpeed.autoSwitch) {
-          const autoLabel = this.cfg.rotationSpeed.autoSwitchLabel ?? i18n.fanAuto;
+          const autoLabel = this.cfg.rotationSpeed.autoSwitchLabel || i18n.fanAuto;
           this.fanAutoService = this.accessory.getService(`${this.cfg.name} ${autoLabel}`)
             ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${autoLabel}`, 'fan-auto');
           this.fanAutoService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${autoLabel}`);
@@ -116,7 +117,7 @@ export class AcHttpAccessory {
       if (this.cfg.swingVertical.stateless && this.cfg.swingVertical.modes?.length) {
         // Radio buttons (stateless + explicit mode list) — linked switches
         this.swingModeServices = [];
-        const swingLabel = this.cfg.swingVertical.label ?? i18n.swing;
+        const swingLabel = this.cfg.swingVertical.label || i18n.swing;
         for (let i = 0; i < this.cfg.swingVertical.modes.length; i++) {
           const label = `${this.cfg.name} ${swingLabel} ${this.cfg.swingVertical.modes[i]}`;
           const svc = this.accessory.getService(label)
@@ -131,7 +132,7 @@ export class AcHttpAccessory {
         }
       } else if (this.cfg.swingVertical.stateless) {
         // Stateless: linked Switch tile — fires command on tap, resets to OFF after 300ms
-        const swingLabel = this.cfg.swingVertical.label ?? i18n.swing;
+        const swingLabel = this.cfg.swingVertical.label || i18n.swing;
         const swingSvc = this.accessory.getService(`${this.cfg.name} ${swingLabel}`)
           ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'swing-trigger');
         swingSvc.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
@@ -150,16 +151,22 @@ export class AcHttpAccessory {
           });
         this.service.addLinkedService(swingSvc);
       } else {
-        // Stateful: normal SwingMode toggle in top panel
-        this.service.getCharacteristic(platform.Characteristic.SwingMode)
-          .onGet(this.getSwingVertical.bind(this)).onSet(this.setSwingVertical.bind(this));
+        // Stateful: linked Switch tile (SwingMode=0 is hidden by Home app)
+        const swingLabel = this.cfg.swingVertical.label || i18n.swing;
+        this.swingService = this.accessory.getService(`${this.cfg.name} ${swingLabel}`)
+          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'swing-trigger');
+        this.swingService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
+        this.swingService.getCharacteristic(platform.Characteristic.On)
+          .onGet(async () => Boolean(await this.getSwingVertical()))
+          .onSet(async (v: CharacteristicValue) => this.setSwingVertical(v ? 1 : 0));
+        this.service.addLinkedService(this.swingService);
       }
     }
 
     if (this.cfg.currentRelativeHumidity) {
       this.humidityService = this.accessory.getService(platform.Service.HumiditySensor)
         ?? this.accessory.addService(platform.Service.HumiditySensor);
-      const humidityLabel = this.cfg.currentRelativeHumidity?.label ?? i18n.humidity;
+      const humidityLabel = this.cfg.currentRelativeHumidity?.label || i18n.humidity;
       this.humidityService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${humidityLabel}`);
       this.humidityService.getCharacteristic(platform.Characteristic.CurrentRelativeHumidity)
         .onGet(this.getHumidity.bind(this));
@@ -167,7 +174,7 @@ export class AcHttpAccessory {
     }
 
     if (this.cfg.swingHorizontal) {
-      const hSwingLabel = this.cfg.swingHorizontal.label ?? i18n.hSwing;
+      const hSwingLabel = this.cfg.swingHorizontal.label || i18n.hSwing;
       this.hSwingService = this.accessory.getService(`${this.cfg.name} ${hSwingLabel}`)
         ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${hSwingLabel}`, 'hswing');
       this.hSwingService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${hSwingLabel}`);
