@@ -128,7 +128,7 @@ export class AcHttpAccessory {
 
   private async safeGet(ep: EndpointConfig | null, fallback: number): Promise<number> {
     if (!ep) return fallback;
-    try { return await httpGet(ep); }
+    try { const v = await httpGet(ep); return isNaN(v) ? fallback : v; }
     catch (err) { this.log.warn(`[${this.cfg.name}] GET failed:`, (err as Error).message); return fallback; }
   }
 
