@@ -103,7 +103,7 @@ export class AcHttpAccessory {
               else if (this.cfg.swingVertical?.set) await this.safeSet(this.cfg.swingVertical.set, 1, 'SwingVertical');
             } finally {
               this.state.swingVertical = 0;
-              swingSvc.updateCharacteristic(this.platform.Characteristic.On, false);
+              setTimeout(() => swingSvc.updateCharacteristic(this.platform.Characteristic.On, false), 300);
             }
           });
         this.service.addLinkedService(swingSvc);
