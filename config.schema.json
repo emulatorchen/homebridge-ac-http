@@ -31,9 +31,36 @@
                 "map":     { "title": "Value Maps",    "description": "Per-field HomeKit→API string maps.", "type": "object" }
               }
             },
-            "swingVertical":           { "title": "Vertical Swing",  "description": "Maps to HomeKit SwingMode. Set stateless:true for IR toggle remotes.", "type": "object" },
-            "swingHorizontal":         { "title": "Horizontal Swing", "description": "Linked Switch tile. Set stateless:true for IR toggle remotes.",        "type": "object" },
-            "currentRelativeHumidity": { "title": "Humidity Sensor",  "description": "Optional humidity reading. Appears as a linked sensor tile.",          "type": "object" }
+            "rotationSpeed": {
+              "title": "Fan Speed",
+              "description": "RotationSpeed slider, optional Auto switch, or discrete speed buttons.",
+              "type": "object",
+              "properties": {
+                "autoSwitch":      { "title": "Auto Switch",       "description": "Add a linked 'Fan Auto' switch. Auto ON locks slider at 0; slider > 0 turns Auto off.", "type": "boolean" },
+                "autoSwitchLabel": { "title": "Auto Switch Label", "description": "Tile label for the Auto switch. Default: 'Fan Auto'. Use your language, e.g. '自動'.", "type": "string" },
+                "speeds":          { "title": "Discrete Speeds",   "description": "If set, shows radio-button switches instead of a slider. List speed labels in order.", "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "swingVertical": {
+              "title": "Vertical Swing",
+              "description": "Maps to HomeKit SwingMode or a linked Switch. Set stateless:true for IR toggle remotes.",
+              "type": "object",
+              "properties": {
+                "stateless": { "title": "Stateless", "description": "Momentary trigger — fires command on press, resets to OFF. No state tracking.", "type": "boolean" },
+                "label":     { "title": "Tile Label", "description": "Suffix for the linked tile name. Default: 'Swing'. Use your language, e.g. 'スイング'.", "type": "string" },
+                "modes":     { "title": "Swing Modes", "description": "Radio-button labels (stateless only). One Switch per entry; index = value in command map.", "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "swingHorizontal": {
+              "title": "Horizontal Swing",
+              "description": "Appears as a linked Switch tile.",
+              "type": "object",
+              "properties": {
+                "stateless": { "title": "Stateless", "description": "Momentary trigger — fires command on press, resets to OFF.", "type": "boolean" },
+                "label":     { "title": "Tile Label", "description": "Suffix for the linked tile name. Default: 'H-Swing'.", "type": "string" }
+              }
+            },
+            "currentRelativeHumidity": { "title": "Humidity Sensor", "description": "Optional humidity reading. Appears as a linked sensor tile.", "type": "object" }
           }
         }
       },
@@ -72,8 +99,35 @@
                 }
               }
             },
-            "swingVertical":  { "title": "Vertical Swing",   "description": "Maps to HomeKit SwingMode. Set stateless:true for IR toggle-only remotes.", "type": "object" },
-            "swingHorizontal":{ "title": "Horizontal Swing",  "description": "Appears as a linked Switch tile. Set stateless:true for IR toggle-only remotes.", "type": "object" },
+            "rotationSpeed": {
+              "title": "Fan Speed",
+              "description": "RotationSpeed slider, optional Auto switch, or discrete speed buttons.",
+              "type": "object",
+              "properties": {
+                "autoSwitch":      { "title": "Auto Switch",       "description": "Add a linked 'Fan Auto' switch. Auto ON locks slider at 0; slider > 0 turns Auto off.", "type": "boolean" },
+                "autoSwitchLabel": { "title": "Auto Switch Label", "description": "Tile label for the Auto switch. Default: 'Fan Auto'. Use your language, e.g. '自動'.", "type": "string" },
+                "speeds":          { "title": "Discrete Speeds",   "description": "If set, shows radio-button switches instead of a slider. List speed labels in order.", "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "swingVertical": {
+              "title": "Vertical Swing",
+              "description": "Maps to HomeKit SwingMode or a linked Switch. Set stateless:true for IR toggle remotes.",
+              "type": "object",
+              "properties": {
+                "stateless": { "title": "Stateless", "description": "Momentary trigger — fires command on press, resets to OFF. No state tracking.", "type": "boolean" },
+                "label":     { "title": "Tile Label", "description": "Suffix for the linked tile name. Default: 'Swing'. Use your language, e.g. 'スイング'.", "type": "string" },
+                "modes":     { "title": "Swing Modes", "description": "Radio-button labels (stateless only). One Switch per entry; index = value in command map.", "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "swingHorizontal": {
+              "title": "Horizontal Swing",
+              "description": "Appears as a linked Switch tile.",
+              "type": "object",
+              "properties": {
+                "stateless": { "title": "Stateless", "description": "Momentary trigger — fires command on press, resets to OFF.", "type": "boolean" },
+                "label":     { "title": "Tile Label", "description": "Suffix for the linked tile name. Default: 'H-Swing'.", "type": "string" }
+              }
+            },
             "currentRelativeHumidity": { "title": "Humidity Sensor", "description": "Optional humidity reading. Appears as a linked sensor tile inside the AC accessory.", "type": "object" }
           }
         }
