@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { percentToSpeed, thresholdMap, resolveCommandBody } from './accessory.js';
 import { applyMap, reverseMap } from './http-client.js';
 import { getLabels } from './i18n.js';
+import { Accessory, Service, uuid } from '@homebridge/hap-nodejs';
 
 describe('percentToSpeed', () => {
   it('maps 0% to auto with default map', () => expect(percentToSpeed(0)).toBe('auto'));
@@ -109,6 +110,33 @@ describe('getLabels', () => {
   it('returns correct labels for zh-CN and zh-TW', () => {
     expect(getLabels('zh-CN').swing).toBe('摆风');
     expect(getLabels('zh-TW').swing).toBe('擺風');
+  });
+});
+
+// ── service subtype migration ─────────────────────────────────────────────────
+// Verifies that the duplicate-subtype HAP error that killed MAXE swing is gone.
+// Root cause: HAP throws when addService is called with an existing UUID+subtype.
+// Fix: remove stale cached services before re-adding with new subtypes.
+describe('service subtype migration', () => {
+  it('addService throws on duplicate UUID+subtype (documents the root cause)', () => {
+    const acc = new Accessory('Test AC', uuid.generate('test-dup'));
+    acc.addService(new Service.Switch('', 'swing-trigger'));
+    expect(() => acc.addService(new Service.Switch('New Label', 'swing-trigger'))).toThrow();
+  });
+
+  it('removing the stale service allows new subtype to be added cleanly', () => {
+    const acc = new Accessory('Test AC', uuid.generate('test-mig'));
+    const stale = acc.addService(new Service.Switch('', 'swing-trigger'));
+    acc.removeService(stale);
+    expect(() => acc.addService(new Service.Switch('MAXE Swing', 'vswing'))).not.toThrow();
+  });
+
+  it('services.find by subtype returns the service regardless of displayName', () => {
+    const acc = new Accessory('Test AC', uuid.generate('test-find'));
+    acc.addService(new Service.Switch('some old label', 'vswing'));
+    const found = acc.services.find(s => s.subtype === 'vswing');
+    expect(found).toBeDefined();
+    expect(found!.subtype).toBe('vswing');
   });
 });
 
