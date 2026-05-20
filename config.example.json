@@ -1,0 +1,104 @@
+{
+  "bridge": {
+    "name": "Homebridge",
+    "username": "CC:22:3D:E3:CE:30",
+    "port": 51826,
+    "pin": "123-45-678"
+  },
+  "platforms": [
+    {
+      "platform": "AcHttpPlatform",
+
+      "templates": [
+        {
+          "name": "maxe-rc14",
+          "pollInterval": 0,
+          "minTemp": 16,
+          "maxTemp": 30,
+          "command": {
+            "url": "http://{host}/api/ir/send",
+            "method": "POST",
+            "body": "{\"power\":\"{active}\",\"mode\":\"{mode}\",\"temperature\":{temperature},\"fan\":\"{fanSpeed}\",\"vswing\":\"{swingVertical}\"}",
+            "map": {
+              "active":        { "0": "off",  "1": "on"   },
+              "mode":          { "0": "auto", "1": "heat", "2": "cool" },
+              "fanSpeed":      { "0": "auto", "20": "1",  "40": "2",  "60": "3", "80": "4", "100": "5" },
+              "swingVertical": { "0": "off", "1": "on" }
+            }
+          },
+          "currentTemperature": {
+            "get": { "jsonPath": "$.temperature" }
+          },
+          "stateUrl": "http://{host}/api/status",
+          "swingVertical": { "stateless": true },
+          "rotationSpeed": {
+            "autoSwitch": true
+          }
+        },
+
+        {
+          "name": "mitsubishi-rest",
+          "pollInterval": 30,
+          "minTemp": 16,
+          "maxTemp": 31,
+          "stateUrl": "http://{host}:{port}/api/status",
+          "active": {
+            "get": { "jsonPath": "$.power",   "valueMap": { "ON": "1", "OFF": "0" } },
+            "set": { "url": "http://{host}:{port}/api/power", "method": "POST", "body": "{\"value\":\"{value}\"}", "setValueMap": { "1": "ON", "0": "OFF" } }
+          },
+          "targetHeaterCoolerState": {
+            "get": { "jsonPath": "$.mode", "valueMap": { "AUTO": "0", "HEAT": "1", "COOL": "2", "DRY": "0", "FAN": "0" } },
+            "set": { "url": "http://{host}:{port}/api/mode", "method": "POST", "body": "{\"mode\":\"{value}\"}", "setValueMap": { "0": "AUTO", "1": "HEAT", "2": "COOL" } }
+          },
+          "currentTemperature": {
+            "get": { "jsonPath": "$.room_temp" }
+          },
+          "coolingThresholdTemperature": {
+            "get": { "jsonPath": "$.setpoint" },
+            "set": { "url": "http://{host}:{port}/api/setpoint", "method": "POST", "body": "{\"value\":{value}}" }
+          },
+          "rotationSpeed": {
+            "get": { "jsonPath": "$.fan", "valueMap": { "AUTO": "0", "1": "20", "2": "40", "3": "60", "4": "80", "5": "100" } },
+            "set": { "url": "http://{host}:{port}/api/fan", "method": "POST" },
+            "fanSpeedMap": { "valueToPercent": { "auto": 0, "1": 20, "2": 40, "3": 60, "4": 80, "5": 100 } }
+          },
+          "swingVertical": {
+            "get": { "jsonPath": "$.vswing", "valueMap": { "OFF": "0", "ON": "1" } },
+            "set": { "url": "http://{host}:{port}/api/vswing", "method": "POST", "body": "{\"value\":\"{value}\"}", "setValueMap": { "0": "OFF", "1": "ON" } }
+          },
+          "swingHorizontal": {
+            "get": { "jsonPath": "$.hswing", "valueMap": { "OFF": "0", "ON": "1" } },
+            "set": { "url": "http://{host}:{port}/api/hswing", "method": "POST", "body": "{\"value\":\"{value}\"}", "setValueMap": { "0": "OFF", "1": "ON" } }
+          },
+          "currentRelativeHumidity": {
+            "get": { "jsonPath": "$.humidity" }
+          }
+        }
+      ],
+
+      "accessories": [
+        {
+          "name": "Living Room AC",
+          "serial": "LR-001",
+          "template": "maxe-rc14",
+          "host": "192.168.1.10"
+        },
+        {
+          "name": "Bedroom AC",
+          "serial": "BR-001",
+          "template": "maxe-rc14",
+          "host": "192.168.1.11",
+          "setterDelay": 300
+        },
+        {
+          "name": "Kitchen AC",
+          "serial": "KT-001",
+          "model": "MSZ-EF25VGW",
+          "template": "mitsubishi-rest",
+          "host": "192.168.1.20",
+          "port": 8080
+        }
+      ]
+    }
+  ]
+}
