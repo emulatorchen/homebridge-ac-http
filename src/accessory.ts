@@ -4,20 +4,26 @@ import type { AcDeviceConfig, EndpointConfig } from './types.js';
 import { httpGet, httpSet, applyMap } from './http-client.js';
 import axios from 'axios';
 
-const DEFAULT_FAN_MAP: [number, string][] = [[0,'auto'],[20,'1'],[40,'2'],[60,'3'],[80,'4'],[100,'5']];
+export const DEFAULT_FAN_MAP: [number, string][] = [[0,'auto'],[20,'1'],[40,'2'],[60,'3'],[80,'4'],[100,'5']];
 
-function percentToSpeed(pct: number, map?: Record<string, number>): string {
+export function percentToSpeed(pct: number, map?: Record<string, number>): string {
   if (!map) return DEFAULT_FAN_MAP.slice().reverse().find(([t]) => pct >= t)?.[1] ?? 'auto';
   const entries = Object.entries(map).map(([k,v]) => [k,v] as [string,number]).sort((a,b) => a[1]-b[1]);
   return entries.slice().reverse().find(([,v]) => pct >= v)?.[0] ?? entries[0][0];
 }
 
-function thresholdMap(value: number, map?: Record<string, string>): string {
+export function thresholdMap(value: number, map?: Record<string, string>): string {
   if (!map) return String(value);
   const entries = Object.entries(map)
     .map(([k,v]) => [Number(k), v] as [number, string])
     .sort((a,b) => a[0]-b[0]);
   return entries.slice().reverse().find(([t]) => value >= t)?.[1] ?? entries[0]?.[1] ?? String(value);
+}
+
+export function resolveCommandBody(template: string, vars: Record<string, string>): string {
+  const resolved = template.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
+  return resolved.replace(/:([a-zA-Z_][a-zA-Z0-9_]*)([,}\]])/g,
+    (_, v, t) => (v === 'true' || v === 'false' || v === 'null') ? `:${v}${t}` : `:"${v}"${t}`);
 }
 
 export class AcHttpAccessory {
@@ -235,9 +241,9 @@ export class AcHttpAccessory {
       swingVertical:   applyMap(String(this.state.swingVertical),   map.swingVertical),
       swingHorizontal: applyMap(String(this.state.swingHorizontal), map.swingHorizontal),
     };
-    const resolvedBody = cmd.body.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
-    let parsedBody: unknown = resolvedBody;
-    try { parsedBody = JSON.parse(resolvedBody); } catch { /* send as string */ }
+    const safeBody = resolveCommandBody(cmd.body, vars);
+    let parsedBody: unknown = safeBody;
+    try { parsedBody = JSON.parse(safeBody); } catch { /* send as string */ }
     try {
       await axios({ method: cmd.method ?? 'POST', url: cmd.url, data: parsedBody, headers: cmd.headers, timeout: cmd.timeout ?? 5000 });
     } catch (err) {
