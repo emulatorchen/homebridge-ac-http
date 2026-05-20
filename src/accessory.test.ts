@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { percentToSpeed, thresholdMap, resolveCommandBody } from './accessory.js';
+import { applyMap, reverseMap } from './http-client.js';
+import { getLabels } from './i18n.js';
 
 describe('percentToSpeed', () => {
   it('maps 0% to auto with default map', () => expect(percentToSpeed(0)).toBe('auto'));
@@ -64,6 +66,49 @@ describe('resolveCommandBody', () => {
   it('leaves unknown placeholders unreplaced', () => {
     const result = resolveCommandBody('{"x":{unknown}}', {});
     expect(result).toBe('{"x":{unknown}}');
+  });
+});
+
+// ── applyMap ─────────────────────────────────────────────────────────────────
+describe('applyMap', () => {
+  const map = { '0': 'off', '1': 'on' };
+  it('maps a known key', () => expect(applyMap('1', map)).toBe('on'));
+  it('returns value unchanged when key not in map', () => expect(applyMap('2', map)).toBe('2'));
+  it('returns value unchanged when no map provided', () => expect(applyMap('1')).toBe('1'));
+});
+
+// ── reverseMap ────────────────────────────────────────────────────────────────
+describe('reverseMap', () => {
+  it('swaps keys and values', () => {
+    const forward = { '0': 'off', '1': 'on' };
+    expect(reverseMap(forward)).toEqual({ off: '0', on: '1' });
+  });
+  it('handles mode map', () => {
+    const forward = { '0': 'auto', '1': 'heat', '2': 'cool' };
+    expect(reverseMap(forward)).toEqual({ auto: '0', heat: '1', cool: '2' });
+  });
+});
+
+// ── getLabels (i18n) ──────────────────────────────────────────────────────────
+describe('getLabels', () => {
+  it('returns English defaults when no language given', () => {
+    const l = getLabels();
+    expect(l.swing).toBe('Swing');
+    expect(l.hSwing).toBe('H-Swing');
+    expect(l.fanAuto).toBe('Fan Auto');
+    expect(l.humidity).toBe('Humidity');
+  });
+  it('returns Japanese labels for ja', () => {
+    const l = getLabels('ja');
+    expect(l.swing).toBe('スイング');
+    expect(l.hSwing).toBe('水平スイング');
+  });
+  it('falls back to English for unknown language', () => {
+    expect(getLabels('xx').swing).toBe('Swing');
+  });
+  it('returns correct labels for zh-CN and zh-TW', () => {
+    expect(getLabels('zh-CN').swing).toBe('摆风');
+    expect(getLabels('zh-TW').swing).toBe('擺風');
   });
 });
 
