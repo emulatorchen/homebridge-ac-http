@@ -199,14 +199,11 @@ export class AcHttpAccessory {
 
   private async pollState(): Promise<void> {
     try {
-      const [active, currTemp, mode] = await Promise.all([
-        this.safeGet(this.resolveGet(this.cfg.active),                    this.state.active),
-        this.safeGet(this.resolveGet(this.cfg.currentTemperature),        this.state.currTemp),
-        this.safeGet(this.resolveGet(this.cfg.targetHeaterCoolerState),   this.state.mode),
-      ]);
-      this.state.active   = active;
-      this.state.currTemp = currTemp;
-      this.state.mode     = mode;
+      // Sequential — many AC controllers (ESP8266/Arduino) can only handle one TCP connection at a time
+      this.state.active   = await this.safeGet(this.resolveGet(this.cfg.active),                  this.state.active);
+      this.state.currTemp = await this.safeGet(this.resolveGet(this.cfg.currentTemperature),      this.state.currTemp);
+      this.state.mode     = await this.safeGet(this.resolveGet(this.cfg.targetHeaterCoolerState), this.state.mode);
+      const { active, currTemp, mode } = this.state;
       this.service.updateCharacteristic(this.platform.Characteristic.Active, active);
       this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, currTemp);
       this.service.updateCharacteristic(this.platform.Characteristic.TargetHeaterCoolerState, mode);
