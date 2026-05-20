@@ -66,3 +66,53 @@ describe('resolveCommandBody', () => {
     expect(result).toBe('{"x":{unknown}}');
   });
 });
+
+// ── maxe-rc14 config integration ────────────────────────────────────────────
+// Uses the exact body template and maps from the user's config.
+// No real hostnames or credentials — only the map values are tested.
+
+const MAXE_BODY = '{"mode":"{mode}","temp":{temperature},"fan":{fanSpeed},"swing":{swingVertical},"power_off":{active}}';
+const MAXE_MAP = {
+  active:        { '0': 'true',  '1': 'false' },
+  mode:          { '0': 'auto',  '1': 'heat',  '2': 'cool' },
+  fanSpeed:      { '0': 'auto',  '20': '1', '40': '2', '60': '3', '80': '4', '100': '5' },
+  swingVertical: { '0': 'false', '1': 'true' },
+};
+
+function maxeVars(state: { active: number; mode: number; temp: number; fanSpeed: number; swingVertical: number }) {
+  return {
+    active:        MAXE_MAP.active[String(state.active) as keyof typeof MAXE_MAP.active]         ?? String(state.active),
+    mode:          MAXE_MAP.mode[String(state.mode) as keyof typeof MAXE_MAP.mode]               ?? String(state.mode),
+    temperature:   String(state.temp),
+    fanSpeed:      thresholdMap(state.fanSpeed, MAXE_MAP.fanSpeed),
+    swingVertical: MAXE_MAP.swingVertical[String(state.swingVertical) as keyof typeof MAXE_MAP.swingVertical] ?? String(state.swingVertical),
+    swingHorizontal: 'false',
+  };
+}
+
+describe('maxe-rc14 command body', () => {
+  it('cool 24°C fan-auto swing-off power-on → valid JSON with correct types', () => {
+    const body = resolveCommandBody(MAXE_BODY, maxeVars({ active: 1, mode: 2, temp: 24, fanSpeed: 0, swingVertical: 0 }));
+    const parsed = JSON.parse(body);
+    expect(parsed).toEqual({ mode: 'cool', temp: 24, fan: 'auto', swing: false, power_off: false });
+  });
+
+  it('heat 28°C fan-speed-3 swing-on power-on → valid JSON with correct types', () => {
+    const body = resolveCommandBody(MAXE_BODY, maxeVars({ active: 1, mode: 1, temp: 28, fanSpeed: 60, swingVertical: 1 }));
+    const parsed = JSON.parse(body);
+    expect(parsed).toEqual({ mode: 'heat', temp: 28, fan: 3, swing: true, power_off: false });
+  });
+
+  it('power-off → power_off is true', () => {
+    const body = resolveCommandBody(MAXE_BODY, maxeVars({ active: 0, mode: 0, temp: 25, fanSpeed: 0, swingVertical: 0 }));
+    expect(JSON.parse(body).power_off).toBe(true);
+  });
+
+  it('all fan speeds produce correct numeric values', () => {
+    const expected: Record<number, number | string> = { 0: 'auto', 20: 1, 40: 2, 60: 3, 80: 4, 100: 5 };
+    for (const [pct, val] of Object.entries(expected)) {
+      const body = resolveCommandBody(MAXE_BODY, maxeVars({ active: 1, mode: 2, temp: 24, fanSpeed: Number(pct), swingVertical: 0 }));
+      expect(JSON.parse(body).fan).toBe(val);
+    }
+  });
+});
