@@ -76,6 +76,12 @@ export class AcHttpAccessory {
         .setProps({ minValue: minTemp, maxValue: maxTemp, minStep: 1 })
         .onGet(this.getTemp.bind(this)).onSet(this.setTemp.bind(this));
 
+    // One-time migration: remove services cached under old subtypes so addService doesn't throw
+    for (const old of ['swing-trigger', 'fan-auto']) {
+      const svc = this.accessory.services.find(s => s.subtype === old);
+      if (svc) this.accessory.removeService(svc);
+    }
+
     if (this.cfg.rotationSpeed) {
       if (this.cfg.rotationSpeed.speeds?.length) {
         // Discrete mode: radio button Switch services, no RotationSpeed slider
@@ -104,8 +110,8 @@ export class AcHttpAccessory {
           .onGet(this.getFanSpeed.bind(this)).onSet(this.setFanSpeed.bind(this));
         if (this.cfg.rotationSpeed.autoSwitch) {
           const autoLabel = this.cfg.rotationSpeed.autoSwitchLabel || i18n.fanAuto;
-          this.fanAutoService = this.accessory.getService(`${this.cfg.name} ${autoLabel}`)
-            ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${autoLabel}`, 'fan-auto');
+          this.fanAutoService = this.accessory.services.find(s => s.subtype === 'fanauto')
+            ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${autoLabel}`, 'fanauto');
           this.fanAutoService.setCharacteristic(platform.Characteristic.Name, `${this.cfg.name} ${autoLabel}`);
           this.fanAutoService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${autoLabel}`);
           this.fanAutoService.getCharacteristic(platform.Characteristic.On)
@@ -136,8 +142,8 @@ export class AcHttpAccessory {
       } else if (this.cfg.swingVertical.stateless) {
         // Stateless: linked Switch tile — fires command on tap, resets to OFF after 300ms
         const swingLabel = this.cfg.swingVertical.label || i18n.swing;
-        const swingSvc = this.accessory.getService(`${this.cfg.name} ${swingLabel}`)
-          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'swing-trigger');
+        const swingSvc = this.accessory.services.find(s => s.subtype === 'vswing')
+          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'vswing');
         swingSvc.setCharacteristic(platform.Characteristic.Name, `${this.cfg.name} ${swingLabel}`);
         swingSvc.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
         swingSvc.getCharacteristic(platform.Characteristic.On)
@@ -157,8 +163,8 @@ export class AcHttpAccessory {
       } else {
         // Stateful: linked Switch tile (SwingMode=0 is hidden by Home app)
         const swingLabel = this.cfg.swingVertical.label || i18n.swing;
-        this.swingService = this.accessory.getService(`${this.cfg.name} ${swingLabel}`)
-          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'swing-trigger');
+        this.swingService = this.accessory.services.find(s => s.subtype === 'vswing')
+          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'vswing');
         this.swingService.setCharacteristic(platform.Characteristic.Name, `${this.cfg.name} ${swingLabel}`);
         this.swingService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
         this.swingService.getCharacteristic(platform.Characteristic.On)
@@ -199,14 +205,11 @@ export class AcHttpAccessory {
 
   private async pollState(): Promise<void> {
     try {
-      const [active, currTemp, mode] = await Promise.all([
-        this.safeGet(this.resolveGet(this.cfg.active),                    this.state.active),
-        this.safeGet(this.resolveGet(this.cfg.currentTemperature),        this.state.currTemp),
-        this.safeGet(this.resolveGet(this.cfg.targetHeaterCoolerState),   this.state.mode),
-      ]);
-      this.state.active   = active;
-      this.state.currTemp = currTemp;
-      this.state.mode     = mode;
+      // Sequential — many AC controllers (ESP8266/Arduino) can only handle one TCP connection at a time
+      this.state.active   = await this.safeGet(this.resolveGet(this.cfg.active),                  this.state.active);
+      this.state.currTemp = await this.safeGet(this.resolveGet(this.cfg.currentTemperature),      this.state.currTemp);
+      this.state.mode     = await this.safeGet(this.resolveGet(this.cfg.targetHeaterCoolerState), this.state.mode);
+      const { active, currTemp, mode } = this.state;
       this.service.updateCharacteristic(this.platform.Characteristic.Active, active);
       this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, currTemp);
       this.service.updateCharacteristic(this.platform.Characteristic.TargetHeaterCoolerState, mode);
