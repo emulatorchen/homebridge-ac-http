@@ -168,8 +168,11 @@ export class AcHttpAccessory {
       swingHorizontal: applyMap(String(this.state.swingHorizontal), map.swingHorizontal),
     };
     const resolvedBody = cmd.body.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
-    let parsedBody: unknown = resolvedBody;
-    try { parsedBody = JSON.parse(resolvedBody); } catch { /* send as string */ }
+    // Auto-quote bare word values that aren't valid JSON atoms (e.g. "auto" → "auto")
+    const safeBody = resolvedBody.replace(/:([a-zA-Z_][a-zA-Z0-9_]*)([,}\]])/g,
+      (_, v, t) => (v === 'true' || v === 'false' || v === 'null') ? `:${v}${t}` : `:"${v}"${t}`);
+    let parsedBody: unknown = safeBody;
+    try { parsedBody = JSON.parse(safeBody); } catch { /* send as string */ }
     try {
       await axios({ method: cmd.method ?? 'POST', url: cmd.url, data: parsedBody, headers: cmd.headers, timeout: cmd.timeout ?? 5000 });
     } catch (err) {
