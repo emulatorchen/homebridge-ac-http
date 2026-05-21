@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import { createRequire } from 'module';
 import { percentToSpeed, thresholdMap, resolveCommandBody, AcHttpAccessory } from './accessory.js';
 import { applyMap, reverseMap } from './http-client.js';
 import { getLabels } from './i18n.js';
 import { Accessory, Service, Characteristic, HAPStatus, HapStatusError, uuid } from '@homebridge/hap-nodejs';
+
+const req = createRequire(import.meta.url);
+const { PlatformAccessory: RealPlatformAccessory } = req('../node_modules/homebridge/dist/platformAccessory.js');
 
 describe('percentToSpeed', () => {
   it('maps 0% to auto with default map', () => expect(percentToSpeed(0)).toBe('auto'));
@@ -190,36 +194,31 @@ describe('maxe-rc14 command body', () => {
   });
 });
 
-// ── addLinkedService regression ───────────────────────────────────────────────
-// iOS shows label text only for standalone tiles (room overview), not for
-// services added via addLinkedService (detail popup shows icon only, no text).
-// This test prevents the label-disappearing regression from sneaking back in.
-describe('no addLinkedService calls', () => {
-  function makeHapMocks(id: string) {
-    const hapAcc = new Accessory('Test AC', uuid.generate(id));
+// ── companion accessory label tests ───────────────────────────────────────────
+// iOS tile labels come from AccessoryInformation.Name on each PlatformAccessory.
+// Secondary services must be separate PlatformAccessories (not services on the
+// main accessory) for labels to appear. These tests use a real PlatformAccessory
+// so the AccessoryInformation.Name assertion matches what iOS actually reads.
+describe('companion accessory labels', () => {
+  const AC_NAME = 'Living Room MAXE AC';
+
+  function makeCompanionMocks(id: string) {
+    const hapAcc = new Accessory(AC_NAME, uuid.generate(id));
+    const companions = new Map<string, typeof RealPlatformAccessory>();
     const mockLog = { warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() };
     const mockPlatform = {
       log: mockLog,
       Service,
       Characteristic,
-      api: {
-        hap: { HapStatusError, HAPStatus, uuid },
-        platformAccessory: class { context = { config: {} }; services: Service[] = []; getService() { return undefined; } addService(...a: unknown[]) { return (new Accessory('', uuid.generate(Math.random().toString()))).addService(...(a as Parameters<Accessory['addService']>)); } },
-      },
-      registerCompanion: vi.fn((_u: string, name: string) => {
-        const compHap = new Accessory(name, uuid.generate(name + Math.random()));
-        return {
-          context: { config: {} },
-          getService: (arg: unknown) => compHap.getService(arg as never),
-          addService: (...args: unknown[]) => (compHap.addService as never)(...args),
-          removeService: (svc: unknown) => compHap.removeService(svc as Service),
-          get services() { return compHap.services; },
-        };
+      api: { hap: { HapStatusError, HAPStatus, uuid } },
+      registerCompanion: vi.fn((compUuid: string, name: string) => {
+        if (!companions.has(compUuid)) companions.set(compUuid, new RealPlatformAccessory(name, compUuid));
+        return companions.get(compUuid);
       }),
     };
     const mockAccessory = {
       context: { config: {
-        name: 'Test AC',
+        name: AC_NAME,
         pollInterval: 0,
         swingVertical: { stateless: true },
         swingHorizontal: { stateless: true },
@@ -231,18 +230,53 @@ describe('no addLinkedService calls', () => {
       removeService: (svc: unknown) => hapAcc.removeService(svc as Service),
       get services() { return hapAcc.services; },
     };
-    return { mockPlatform, mockAccessory };
+    return { mockPlatform, mockAccessory, companions };
   }
 
-  it('secondary services are companion accessories, not services on the main accessory', () => {
+  it('each secondary feature gets its own companion PlatformAccessory', () => {
+    const { mockPlatform, mockAccessory, companions } = makeCompanionMocks('test-companion-count');
+    new AcHttpAccessory(mockPlatform as never, mockAccessory as never);
+    // swing + fan-auto + h-swing + humidity = 4 companions
+    expect(companions.size).toBe(4);
+  });
+
+  it('AccessoryInformation.Name on each companion equals the tile label iOS will display', () => {
+    const { mockPlatform, mockAccessory, companions } = makeCompanionMocks('test-companion-names');
+    new AcHttpAccessory(mockPlatform as never, mockAccessory as never);
+
+    for (const [, acc] of companions) {
+      const infoSvc = (acc as never as Accessory).getService(Service.AccessoryInformation);
+      const name = infoSvc?.getCharacteristic(Characteristic.Name)?.value as string;
+      // Every companion label must start with the AC name and contain a descriptor
+      expect(name).toMatch(new RegExp(`^${AC_NAME} .+`));
+    }
+  });
+
+  it('swing companion label contains "Swing"', () => {
+    const { mockPlatform, mockAccessory, companions } = makeCompanionMocks('test-swing-label');
+    new AcHttpAccessory(mockPlatform as never, mockAccessory as never);
+    const swingAcc = [...companions.values()].find(a => (a as never as { displayName: string }).displayName.includes('Swing'));
+    expect(swingAcc).toBeDefined();
+    const infoSvc = (swingAcc as never as Accessory).getService(Service.AccessoryInformation);
+    expect(infoSvc?.getCharacteristic(Characteristic.Name)?.value).toBe(`${AC_NAME} Swing`);
+  });
+
+  it('fan-auto companion label contains "Fan Auto"', () => {
+    const { mockPlatform, mockAccessory, companions } = makeCompanionMocks('test-fanauto-label');
+    new AcHttpAccessory(mockPlatform as never, mockAccessory as never);
+    const faAcc = [...companions.values()].find(a => (a as never as { displayName: string }).displayName.includes('Fan Auto'));
+    expect(faAcc).toBeDefined();
+    const infoSvc = (faAcc as never as Accessory).getService(Service.AccessoryInformation);
+    expect(infoSvc?.getCharacteristic(Characteristic.Name)?.value).toBe(`${AC_NAME} Fan Auto`);
+  });
+
+  it('main accessory retains only HeaterCooler + AccessoryInformation, addLinkedService never called', () => {
     const spy = vi.spyOn(Service.prototype, 'addLinkedService');
-    const { mockPlatform, mockAccessory } = makeHapMocks('test-no-linked');
+    const { mockPlatform, mockAccessory } = makeCompanionMocks('test-main-only');
     new AcHttpAccessory(mockPlatform as never, mockAccessory as never);
     expect(spy).not.toHaveBeenCalled();
-    expect(mockPlatform.registerCompanion).toHaveBeenCalled();
-    // Main accessory should only have HeaterCooler + AccessoryInformation
     const mainUuids = (mockAccessory.services as Service[]).map(s => s.UUID);
-    expect(mainUuids.every((u: string) => u === Service.HeaterCooler.UUID || u === Service.AccessoryInformation.UUID)).toBe(true);
+    expect(mainUuids.every(u => u === Service.HeaterCooler.UUID || u === Service.AccessoryInformation.UUID)).toBe(true);
     spy.mockRestore();
   });
 });
