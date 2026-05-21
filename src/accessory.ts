@@ -100,7 +100,6 @@ export class AcHttpAccessory {
           svc.getCharacteristic(platform.Characteristic.On)
             .onGet(() => this.state.fanSpeedMode === captured)
             .onSet((v: CharacteristicValue) => this.setFanSpeedDiscrete(captured, v as boolean));
-          this.service.addLinkedService(svc);
           this.fanSpeedServices.push(svc);
         }
       } else {
@@ -116,7 +115,6 @@ export class AcHttpAccessory {
           this.fanAutoService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${autoLabel}`);
           this.fanAutoService.getCharacteristic(platform.Characteristic.On)
             .onGet(this.getFanAuto.bind(this)).onSet(this.setFanAuto.bind(this));
-          this.service.addLinkedService(this.fanAutoService);
         }
       }
     }
@@ -136,7 +134,6 @@ export class AcHttpAccessory {
           svc.getCharacteristic(platform.Characteristic.On)
             .onGet(() => this.state.swingVertical === idx)
             .onSet((v: CharacteristicValue) => this.setSwingMode(idx, v as boolean));
-          this.service.addLinkedService(svc);
           this.swingModeServices.push(svc);
         }
       } else if (this.cfg.swingVertical.stateless) {
@@ -159,7 +156,6 @@ export class AcHttpAccessory {
               setTimeout(() => swingSvc.updateCharacteristic(this.platform.Characteristic.On, false), 300);
             }
           });
-        this.service.addLinkedService(swingSvc);
       } else {
         // Stateful: linked Switch tile (SwingMode=0 is hidden by Home app)
         const swingLabel = this.cfg.swingVertical.label || i18n.swing;
@@ -170,7 +166,6 @@ export class AcHttpAccessory {
         this.swingService.getCharacteristic(platform.Characteristic.On)
           .onGet(async () => Boolean(await this.getSwingVertical()))
           .onSet(async (v: CharacteristicValue) => this.setSwingVertical(v ? 1 : 0));
-        this.service.addLinkedService(this.swingService);
       }
     }
 
@@ -182,7 +177,6 @@ export class AcHttpAccessory {
       this.humidityService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${humidityLabel}`);
       this.humidityService.getCharacteristic(platform.Characteristic.CurrentRelativeHumidity)
         .onGet(this.getHumidity.bind(this));
-      this.service.addLinkedService(this.humidityService);
     }
 
     if (this.cfg.swingHorizontal) {
@@ -193,7 +187,6 @@ export class AcHttpAccessory {
       this.hSwingService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${hSwingLabel}`);
       this.hSwingService.getCharacteristic(platform.Characteristic.On)
         .onGet(this.getSwingHorizontal.bind(this)).onSet(this.setSwingHorizontal.bind(this));
-      this.service.addLinkedService(this.hSwingService);
     }
 
     const interval = this.cfg.pollInterval ?? 30;
