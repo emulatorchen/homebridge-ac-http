@@ -76,10 +76,11 @@ export class AcHttpAccessory {
         .setProps({ minValue: minTemp, maxValue: maxTemp, minStep: 1 })
         .onGet(this.getTemp.bind(this)).onSet(this.setTemp.bind(this));
 
-    // One-time migration: remove services cached under old subtypes so addService doesn't throw
-    for (const old of ['swing-trigger', 'fan-auto']) {
-      const svc = this.accessory.services.find(s => s.subtype === old);
-      if (svc) this.accessory.removeService(svc);
+    // Migration: remove any secondary service placed on the main accessory by older versions
+    for (const svc of [...this.accessory.services]) {
+      if (svc.UUID !== platform.Service.HeaterCooler.UUID && svc.UUID !== platform.Service.AccessoryInformation.UUID) {
+        this.accessory.removeService(svc);
+      }
     }
 
     if (this.cfg.rotationSpeed) {
@@ -92,8 +93,10 @@ export class AcHttpAccessory {
         this.state.fanSpeedMode = speedOptions[0];
         for (const opt of speedOptions) {
           const label = `${this.cfg.name} Fan ${opt}`;
-          const svc = this.accessory.getService(label)
-            ?? this.accessory.addService(platform.Service.Switch, label, `fan-${opt}`);
+          const fanUuid = platform.api.hap.uuid.generate(`${this.cfg.serial ?? this.cfg.name}-fan-${opt}`);
+          const fanAcc = platform.registerCompanion(fanUuid, label);
+          const svc = fanAcc.getService(platform.Service.Switch)
+            ?? fanAcc.addService(platform.Service.Switch, label, `fan-${opt}`);
           svc.setCharacteristic(platform.Characteristic.Name, label);
           svc.setCharacteristic(platform.Characteristic.ConfiguredName, label);
           const captured = opt;
@@ -109,10 +112,13 @@ export class AcHttpAccessory {
           .onGet(this.getFanSpeed.bind(this)).onSet(this.setFanSpeed.bind(this));
         if (this.cfg.rotationSpeed.autoSwitch) {
           const autoLabel = this.cfg.rotationSpeed.autoSwitchLabel || i18n.fanAuto;
-          this.fanAutoService = this.accessory.services.find(s => s.subtype === 'fanauto')
-            ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${autoLabel}`, 'fanauto');
-          this.fanAutoService.setCharacteristic(platform.Characteristic.Name, `${this.cfg.name} ${autoLabel}`);
-          this.fanAutoService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${autoLabel}`);
+          const faLabel = `${this.cfg.name} ${autoLabel}`;
+          const faUuid = platform.api.hap.uuid.generate(`${this.cfg.serial ?? this.cfg.name}-fanauto`);
+          const faAcc = platform.registerCompanion(faUuid, faLabel);
+          this.fanAutoService = faAcc.getService(platform.Service.Switch)
+            ?? faAcc.addService(platform.Service.Switch, faLabel, 'fanauto');
+          this.fanAutoService.setCharacteristic(platform.Characteristic.Name, faLabel);
+          this.fanAutoService.setCharacteristic(platform.Characteristic.ConfiguredName, faLabel);
           this.fanAutoService.getCharacteristic(platform.Characteristic.On)
             .onGet(this.getFanAuto.bind(this)).onSet(this.setFanAuto.bind(this));
         }
@@ -126,8 +132,10 @@ export class AcHttpAccessory {
         const swingLabel = this.cfg.swingVertical.label || i18n.swing;
         for (let i = 0; i < this.cfg.swingVertical.modes.length; i++) {
           const label = `${this.cfg.name} ${swingLabel} ${this.cfg.swingVertical.modes[i]}`;
-          const svc = this.accessory.getService(label)
-            ?? this.accessory.addService(platform.Service.Switch, label, `swing-mode-${i}`);
+          const smUuid = platform.api.hap.uuid.generate(`${this.cfg.serial ?? this.cfg.name}-swing-mode-${i}`);
+          const smAcc = platform.registerCompanion(smUuid, label);
+          const svc = smAcc.getService(platform.Service.Switch)
+            ?? smAcc.addService(platform.Service.Switch, label, `swing-mode-${i}`);
           svc.setCharacteristic(platform.Characteristic.Name, label);
           svc.setCharacteristic(platform.Characteristic.ConfiguredName, label);
           const idx = i;
@@ -137,10 +145,12 @@ export class AcHttpAccessory {
           this.swingModeServices.push(svc);
         }
       } else if (this.cfg.swingVertical.stateless) {
-        // Stateless: linked Switch tile — fires command on tap, resets to OFF after 300ms
+        // Stateless: companion Switch tile — fires command on tap, resets to OFF after 300ms
         const swingLabel = this.cfg.swingVertical.label || i18n.swing;
-        const swingSvc = this.accessory.services.find(s => s.subtype === 'vswing')
-          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'vswing');
+        const svUuid = platform.api.hap.uuid.generate(`${this.cfg.serial ?? this.cfg.name}-vswing`);
+        const svAcc = platform.registerCompanion(svUuid, `${this.cfg.name} ${swingLabel}`);
+        const swingSvc = svAcc.getService(platform.Service.Switch)
+          ?? svAcc.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'vswing');
         swingSvc.setCharacteristic(platform.Characteristic.Name, `${this.cfg.name} ${swingLabel}`);
         swingSvc.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
         swingSvc.getCharacteristic(platform.Characteristic.On)
@@ -157,10 +167,12 @@ export class AcHttpAccessory {
             }
           });
       } else {
-        // Stateful: linked Switch tile (SwingMode=0 is hidden by Home app)
+        // Stateful: companion Switch tile (SwingMode=0 is hidden by Home app)
         const swingLabel = this.cfg.swingVertical.label || i18n.swing;
-        this.swingService = this.accessory.services.find(s => s.subtype === 'vswing')
-          ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'vswing');
+        const svUuid = platform.api.hap.uuid.generate(`${this.cfg.serial ?? this.cfg.name}-vswing`);
+        const svAcc = platform.registerCompanion(svUuid, `${this.cfg.name} ${swingLabel}`);
+        this.swingService = svAcc.getService(platform.Service.Switch)
+          ?? svAcc.addService(platform.Service.Switch, `${this.cfg.name} ${swingLabel}`, 'vswing');
         this.swingService.setCharacteristic(platform.Characteristic.Name, `${this.cfg.name} ${swingLabel}`);
         this.swingService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${swingLabel}`);
         this.swingService.getCharacteristic(platform.Characteristic.On)
@@ -170,21 +182,25 @@ export class AcHttpAccessory {
     }
 
     if (this.cfg.currentRelativeHumidity) {
-      this.humidityService = this.accessory.getService(platform.Service.HumiditySensor)
-        ?? this.accessory.addService(platform.Service.HumiditySensor);
-      const humidityLabel = this.cfg.currentRelativeHumidity?.label || i18n.humidity;
-      this.humidityService.setCharacteristic(platform.Characteristic.Name, `${this.cfg.name} ${humidityLabel}`);
-      this.humidityService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${humidityLabel}`);
+      const humLabel = `${this.cfg.name} ${this.cfg.currentRelativeHumidity?.label || i18n.humidity}`;
+      const humUuid = platform.api.hap.uuid.generate(`${this.cfg.serial ?? this.cfg.name}-humidity`);
+      const humAcc = platform.registerCompanion(humUuid, humLabel);
+      this.humidityService = humAcc.getService(platform.Service.HumiditySensor)
+        ?? humAcc.addService(platform.Service.HumiditySensor, humLabel);
+      this.humidityService.setCharacteristic(platform.Characteristic.Name, humLabel);
+      this.humidityService.setCharacteristic(platform.Characteristic.ConfiguredName, humLabel);
       this.humidityService.getCharacteristic(platform.Characteristic.CurrentRelativeHumidity)
         .onGet(this.getHumidity.bind(this));
     }
 
     if (this.cfg.swingHorizontal) {
-      const hSwingLabel = this.cfg.swingHorizontal.label || i18n.hSwing;
-      this.hSwingService = this.accessory.getService(`${this.cfg.name} ${hSwingLabel}`)
-        ?? this.accessory.addService(platform.Service.Switch, `${this.cfg.name} ${hSwingLabel}`, 'hswing');
-      this.hSwingService.setCharacteristic(platform.Characteristic.Name, `${this.cfg.name} ${hSwingLabel}`);
-      this.hSwingService.setCharacteristic(platform.Characteristic.ConfiguredName, `${this.cfg.name} ${hSwingLabel}`);
+      const hLabel = `${this.cfg.name} ${this.cfg.swingHorizontal.label || i18n.hSwing}`;
+      const hsUuid = platform.api.hap.uuid.generate(`${this.cfg.serial ?? this.cfg.name}-hswing`);
+      const hsAcc = platform.registerCompanion(hsUuid, hLabel);
+      this.hSwingService = hsAcc.getService(platform.Service.Switch)
+        ?? hsAcc.addService(platform.Service.Switch, hLabel, 'hswing');
+      this.hSwingService.setCharacteristic(platform.Characteristic.Name, hLabel);
+      this.hSwingService.setCharacteristic(platform.Characteristic.ConfiguredName, hLabel);
       this.hSwingService.getCharacteristic(platform.Characteristic.On)
         .onGet(this.getSwingHorizontal.bind(this)).onSet(this.setSwingHorizontal.bind(this));
     }

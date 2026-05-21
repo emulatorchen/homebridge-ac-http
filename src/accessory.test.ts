@@ -202,7 +202,20 @@ describe('no addLinkedService calls', () => {
       log: mockLog,
       Service,
       Characteristic,
-      api: { hap: { HapStatusError, HAPStatus } },
+      api: {
+        hap: { HapStatusError, HAPStatus, uuid },
+        platformAccessory: class { context = { config: {} }; services: Service[] = []; getService() { return undefined; } addService(...a: unknown[]) { return (new Accessory('', uuid.generate(Math.random().toString()))).addService(...(a as Parameters<Accessory['addService']>)); } },
+      },
+      registerCompanion: vi.fn((_u: string, name: string) => {
+        const compHap = new Accessory(name, uuid.generate(name + Math.random()));
+        return {
+          context: { config: {} },
+          getService: (arg: unknown) => compHap.getService(arg as never),
+          addService: (...args: unknown[]) => (compHap.addService as never)(...args),
+          removeService: (svc: unknown) => compHap.removeService(svc as Service),
+          get services() { return compHap.services; },
+        };
+      }),
     };
     const mockAccessory = {
       context: { config: {
@@ -221,11 +234,15 @@ describe('no addLinkedService calls', () => {
     return { mockPlatform, mockAccessory };
   }
 
-  it('swing/fan-auto/humidity/h-swing are standalone services, not linked', () => {
+  it('secondary services are companion accessories, not services on the main accessory', () => {
     const spy = vi.spyOn(Service.prototype, 'addLinkedService');
     const { mockPlatform, mockAccessory } = makeHapMocks('test-no-linked');
     new AcHttpAccessory(mockPlatform as never, mockAccessory as never);
     expect(spy).not.toHaveBeenCalled();
+    expect(mockPlatform.registerCompanion).toHaveBeenCalled();
+    // Main accessory should only have HeaterCooler + AccessoryInformation
+    const mainUuids = (mockAccessory.services as Service[]).map(s => s.UUID);
+    expect(mainUuids.every((u: string) => u === Service.HeaterCooler.UUID || u === Service.AccessoryInformation.UUID)).toBe(true);
     spy.mockRestore();
   });
 });
