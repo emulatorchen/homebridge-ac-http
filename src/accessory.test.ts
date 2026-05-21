@@ -270,6 +270,25 @@ describe('companion accessory labels', () => {
     expect(infoSvc?.getCharacteristic(Characteristic.Name)?.value).toBe(`${AC_NAME} Fan Auto`);
   });
 
+  it('companion AccessoryInformation.Name is set by the same mechanism as the main AC tile that already works', () => {
+    // The main AC tile (e.g. "Living Room MAXE AC") shows correctly in iOS because
+    // PlatformAccessory auto-sets AccessoryInformation.Name from the constructor name arg.
+    // Companions use the exact same constructor call — this test proves it.
+    const mainAcc  = new RealPlatformAccessory(AC_NAME, uuid.generate('proof-main'));
+    const swingAcc = new RealPlatformAccessory(`${AC_NAME} Swing`, uuid.generate('proof-swing'));
+    const fanAcc   = new RealPlatformAccessory(`${AC_NAME} Fan Auto`, uuid.generate('proof-fan'));
+
+    const getName = (acc: typeof RealPlatformAccessory) =>
+      (acc as never as Accessory)
+        .getService(Service.AccessoryInformation)
+        ?.getCharacteristic(Characteristic.Name)?.value;
+
+    // Main tile: if this shows in iOS, companions will too — identical mechanism
+    expect(getName(mainAcc)).toBe(AC_NAME);
+    expect(getName(swingAcc)).toBe(`${AC_NAME} Swing`);
+    expect(getName(fanAcc)).toBe(`${AC_NAME} Fan Auto`);
+  });
+
   it('main accessory retains only HeaterCooler + AccessoryInformation, addLinkedService never called', () => {
     const spy = vi.spyOn(Service.prototype, 'addLinkedService');
     const { mockPlatform, mockAccessory } = makeCompanionMocks('test-main-only');
