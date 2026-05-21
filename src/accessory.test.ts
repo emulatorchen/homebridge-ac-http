@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { percentToSpeed, thresholdMap, resolveCommandBody } from './accessory.js';
+import { describe, it, expect, vi } from 'vitest';
+import { percentToSpeed, thresholdMap, resolveCommandBody, AcHttpAccessory } from './accessory.js';
 import { applyMap, reverseMap } from './http-client.js';
 import { getLabels } from './i18n.js';
-import { Accessory, Service, uuid } from '@homebridge/hap-nodejs';
+import { Accessory, Service, Characteristic, HAPStatus, HapStatusError, uuid } from '@homebridge/hap-nodejs';
 
 describe('percentToSpeed', () => {
   it('maps 0% to auto with default map', () => expect(percentToSpeed(0)).toBe('auto'));
@@ -187,5 +187,45 @@ describe('maxe-rc14 command body', () => {
       const body = resolveCommandBody(MAXE_BODY, maxeVars({ active: 1, mode: 2, temp: 24, fanSpeed: Number(pct), swingVertical: 0 }));
       expect(JSON.parse(body).fan).toBe(val);
     }
+  });
+});
+
+// ── addLinkedService regression ───────────────────────────────────────────────
+// iOS shows label text only for standalone tiles (room overview), not for
+// services added via addLinkedService (detail popup shows icon only, no text).
+// This test prevents the label-disappearing regression from sneaking back in.
+describe('no addLinkedService calls', () => {
+  function makeHapMocks(id: string) {
+    const hapAcc = new Accessory('Test AC', uuid.generate(id));
+    const mockLog = { warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() };
+    const mockPlatform = {
+      log: mockLog,
+      Service,
+      Characteristic,
+      api: { hap: { HapStatusError, HAPStatus } },
+    };
+    const mockAccessory = {
+      context: { config: {
+        name: 'Test AC',
+        pollInterval: 0,
+        swingVertical: { stateless: true },
+        swingHorizontal: { stateless: true },
+        currentRelativeHumidity: { get: { url: 'http://localhost/humidity' } },
+        rotationSpeed: { autoSwitch: true },
+      }},
+      getService:    (arg: unknown) => hapAcc.getService(arg as never),
+      addService:    (...args: unknown[]) => (hapAcc.addService as never)(...args),
+      removeService: (svc: unknown) => hapAcc.removeService(svc as Service),
+      get services() { return hapAcc.services; },
+    };
+    return { mockPlatform, mockAccessory };
+  }
+
+  it('swing/fan-auto/humidity/h-swing are standalone services, not linked', () => {
+    const spy = vi.spyOn(Service.prototype, 'addLinkedService');
+    const { mockPlatform, mockAccessory } = makeHapMocks('test-no-linked');
+    new AcHttpAccessory(mockPlatform as never, mockAccessory as never);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
