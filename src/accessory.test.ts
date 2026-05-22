@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createRequire } from 'module';
 import { percentToSpeed, thresholdMap, resolveCommandBody, AcHttpAccessory } from './accessory.js';
 import { applyMap, reverseMap } from './http-client.js';
@@ -9,6 +9,13 @@ const req = createRequire(import.meta.url);
 let hapMod: any;
 try { hapMod = req('@homebridge/hap-nodejs'); } catch { hapMod = req('hap-nodejs'); }
 const { Accessory, Service, Characteristic, HAPStatus, HapStatusError, uuid } = hapMod;
+
+// ── axios mock (module-level, hoisted) ────────────────────────────────────────
+// Intercepts every sendCommand call without making real HTTP requests.
+// All existing tests are unaffected: they configure pollInterval:0 and no URLs,
+// so they never reach axios.
+const mockAxios = vi.hoisted(() => vi.fn().mockResolvedValue({ status: 200, data: {} }));
+vi.mock('axios', () => ({ default: mockAxios }));
 
 describe('percentToSpeed', () => {
   it('maps 0% to auto with default map', () => expect(percentToSpeed(0)).toBe('auto'));
@@ -435,5 +442,406 @@ describe('linked services', () => {
     expect(updateSpy).toHaveBeenCalledWith(Characteristic.On, false);
 
     setTimeoutSpy.mockRestore();
+  });
+});
+
+// ── MAXE command: every button sends the correct payload ──────────────────────
+// End-to-end handler tests: HomeKit SET → handler → sendCommand → axios.
+// Three prior button-breakage bugs were only caught in production because these
+// tests did not exist. Every axis of the command must be tested individually
+// and in combination to prevent regressions.
+//
+// Axes covered:
+//   active (power), mode, coolingThresholdTemperature, rotationSpeed (slider),
+//   fanAuto switch, swingVertical (stateless one-shot), swingHorizontal (stateless toggle)
+//
+// State-isolation coverage:
+//   Tapping swing must NOT carry swingVertical=1 into subsequent commands.
+//   (Bug: the `finally` block only reset the UI button; it left state.swingVertical=1
+//    permanently, causing every subsequent sendCommand to include swing:true, which
+//    the MAXE AC rejected for all commands except power-off.)
+
+const MAXE_AC   = 'Living Room MAXE AC';
+const MAXE_URL  = 'http://maxe.local/cmd';
+
+// Body includes swingHorizontal so hswing tests can also assert the field.
+const MAXE_CFG = {
+  name: MAXE_AC,
+  pollInterval: 0,
+  command: {
+    url: MAXE_URL,
+    method: 'POST' as const,
+    body: '{"mode":"{mode}","temp":{temperature},"fan":{fanSpeed},"swing":{swingVertical},"hswing":{swingHorizontal},"power_off":{active}}',
+    map: {
+      active:          { '0': 'true',  '1': 'false' },
+      mode:            { '0': 'auto',  '1': 'heat',  '2': 'cool' },
+      fanSpeed:        { '0': 'auto',  '20': '1', '40': '2', '60': '3', '80': '4', '100': '5' },
+      swingVertical:   { '0': 'false', '1': 'true' },
+      swingHorizontal: { '0': 'false', '1': 'true' },
+    },
+  },
+  coolingThresholdTemperature: {},
+  swingVertical:   { stateless: true },
+  swingHorizontal: { stateless: true },
+  rotationSpeed:   { autoSwitch: true },
+};
+
+function makeMaxeAcc() {
+  const hapAcc = new Accessory(MAXE_AC, uuid.generate(`maxe-cmd-${Math.random()}`));
+  const mp = {
+    log: { warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() },
+    Service, Characteristic,
+    api: { hap: { HapStatusError, HAPStatus, uuid } },
+  };
+  const ma = {
+    context: { config: MAXE_CFG },
+    getService:    (a: unknown) => hapAcc.getService(a as never),
+    addService:    (...a: unknown[]) => (hapAcc.addService as never)(...a),
+    removeService: (s: unknown) => hapAcc.removeService(s as Service),
+    get services() { return hapAcc.services; },
+  };
+  new AcHttpAccessory(mp as never, ma as never);
+  return hapAcc;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function sh(char: unknown): (v: any) => Promise<void> {
+  const h = (char as Record<string, unknown>).setHandler as ((v: unknown) => Promise<void>) | undefined;
+  if (h) return h as (v: unknown) => Promise<void>;
+  throw new Error('No setHandler on characteristic — handler not registered?');
+}
+
+function lastCmd(): Record<string, unknown> {
+  const calls = mockAxios.mock.calls;
+  if (!calls.length) throw new Error('axios was not called');
+  const data = (calls[calls.length - 1][0] as { data: unknown }).data;
+  return (typeof data === 'string' ? JSON.parse(data) : data) as Record<string, unknown>;
+}
+
+describe('MAXE command — every button sends the correct payload', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let hapAcc: any, heater: Service, vswing: Service, hswing: Service, fanauto: Service;
+
+  beforeEach(() => {
+    mockAxios.mockClear();
+    hapAcc  = makeMaxeAcc();
+    heater  = hapAcc.services.find((s: Service) => s.UUID === Service.HeaterCooler.UUID);
+    vswing  = hapAcc.services.find((s: Service) => s.subtype === 'vswing');
+    hswing  = hapAcc.services.find((s: Service) => s.subtype === 'hswing');
+    fanauto = hapAcc.services.find((s: Service) => s.subtype === 'fanauto');
+  });
+
+  // ── Active ────────────────────────────────────────────────────────────────
+  it('power OFF (active=0) → power_off:true in command', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(0);
+    expect(lastCmd().power_off).toBe(true);
+  });
+  it('power ON (active=1) → power_off:false in command', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    expect(lastCmd().power_off).toBe(false);
+  });
+
+  // ── Mode ─────────────────────────────────────────────────────────────────
+  it('mode auto (0) → mode:"auto"', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(0);
+    expect(lastCmd().mode).toBe('auto');
+  });
+  it('mode heat (1) → mode:"heat"', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    expect(lastCmd().mode).toBe('heat');
+  });
+  it('mode cool (2) → mode:"cool"', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    expect(lastCmd().mode).toBe('cool');
+  });
+
+  // ── Temperature ──────────────────────────────────────────────────────────
+  it('temp 16°C → temp:16', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(16);
+    expect(lastCmd().temp).toBe(16);
+  });
+  it('temp 24°C → temp:24', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
+    expect(lastCmd().temp).toBe(24);
+  });
+  it('temp 30°C → temp:30', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(30);
+    expect(lastCmd().temp).toBe(30);
+  });
+
+  // ── Fan speed slider (all 6 threshold values) ────────────────────────────
+  const FAN_CASES: [number, string | number][] = [
+    [0, 'auto'], [20, 1], [40, 2], [60, 3], [80, 4], [100, 5],
+  ];
+  for (const [pct, expected] of FAN_CASES) {
+    it(`fan ${pct}% → fan:${expected}`, async () => {
+      await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(pct);
+      expect(lastCmd().fan).toBe(expected);
+    });
+  }
+
+  // ── Fan-auto switch ───────────────────────────────────────────────────────
+  it('fan-auto ON → fan:"auto"', async () => {
+    await sh(fanauto.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().fan).toBe('auto');
+  });
+  it('fan-auto OFF (from auto state) → fan:1 (steps out of auto)', async () => {
+    await sh(fanauto.getCharacteristic(Characteristic.On))(false);
+    expect(lastCmd().fan).toBe(1);
+  });
+
+  // ── Stateless vswing ─────────────────────────────────────────────────────
+  it('swing tap (v=true) → swing:true in command', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().swing).toBe(true);
+  });
+  it('swing reset (v=false) → no command sent at all', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(false);
+    expect(mockAxios.mock.calls.length).toBe(0);
+  });
+  it('second swing tap → swing:true again (state was properly reset)', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().swing).toBe(true);
+  });
+
+  // ── REGRESSION: stateless swing must NOT poison subsequent commands ───────
+  // Root cause: state.swingVertical was left at 1 after a swing tap.
+  // Every subsequent sendCommand included swing:true, which the MAXE AC
+  // rejected for all operations except power-off (where power_off:true is
+  // accepted regardless of swing state).
+  it('[REGRESSION] power-on after swing tap → swing:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    expect(lastCmd().swing).toBe(false);
+  });
+  it('[REGRESSION] power-off after swing tap → swing:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.Active))(0);
+    expect(lastCmd().swing).toBe(false);
+  });
+  it('[REGRESSION] mode change after swing tap → swing:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    expect(lastCmd().swing).toBe(false);
+  });
+  it('[REGRESSION] temp change after swing tap → swing:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
+    expect(lastCmd().swing).toBe(false);
+  });
+  it('[REGRESSION] fan change after swing tap → swing:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(60);
+    expect(lastCmd().swing).toBe(false);
+  });
+  it('[REGRESSION] fan-auto after swing tap → swing:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(fanauto.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().swing).toBe(false);
+  });
+
+  // ── Stateless hswing ─────────────────────────────────────────────────────
+  it('hswing ON → hswing:true', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().hswing).toBe(true);
+  });
+  it('hswing OFF → hswing:false', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);   // turn on first
+    mockAxios.mockClear();
+    await sh(hswing.getCharacteristic(Characteristic.On))(false);  // then off
+    expect(lastCmd().hswing).toBe(false);
+  });
+
+  // ── State isolation: each button only changes its own field ───────────────
+  // Catches cases where one button accidentally mutates shared state used by
+  // another axis.
+  it('temp change: swing stays false, hswing stays false', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(22);
+    expect(lastCmd()).toMatchObject({ temp: 22, swing: false, hswing: false });
+  });
+  it('mode change: temp stays at default (24), fan stays auto', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    expect(lastCmd()).toMatchObject({ mode: 'heat', temp: 24, fan: 'auto' });
+  });
+  it('fan change: mode and swing are unaffected', async () => {
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(40);
+    expect(lastCmd()).toMatchObject({ fan: 2, mode: 'auto', swing: false });
+  });
+  it('hswing ON: vswing stays false', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toMatchObject({ hswing: true, swing: false });
+  });
+
+  // ── Pairwise: every button combination (A then B) ─────────────────────────
+  // For each pair (A, B): press A, verify B still produces a correct full
+  // command and that A's prior value is carried forward where expected.
+  // Default initial state: active=0, mode=0, temp=24, fanSpeed=0, vswing=0, hswing=0
+
+  it('[pair] mode=cool → temp=22: command has both mode:cool AND temp:22', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(22);
+    expect(lastCmd()).toMatchObject({ mode: 'cool', temp: 22, swing: false, hswing: false });
+  });
+  it('[pair] temp=18 → mode=heat: command has both temp:18 AND mode:heat', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(18);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    expect(lastCmd()).toMatchObject({ temp: 18, mode: 'heat', swing: false });
+  });
+  it('[pair] fan=80% → temp=28: command has fan:4 AND temp:28', async () => {
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(80);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(28);
+    expect(lastCmd()).toMatchObject({ fan: 4, temp: 28 });
+  });
+  it('[pair] temp=20 → fan=40%: command has temp:20 AND fan:2', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(20);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(40);
+    expect(lastCmd()).toMatchObject({ temp: 20, fan: 2 });
+  });
+  it('[pair] mode=heat → fan=100%: command has mode:heat AND fan:5', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(100);
+    expect(lastCmd()).toMatchObject({ mode: 'heat', fan: 5 });
+  });
+  it('[pair] fan=60% → mode=cool: command has fan:3 AND mode:cool', async () => {
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(60);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    expect(lastCmd()).toMatchObject({ fan: 3, mode: 'cool' });
+  });
+  it('[pair] active=1 → mode=cool: power_off:false AND mode:cool', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    expect(lastCmd()).toMatchObject({ power_off: false, mode: 'cool' });
+  });
+  it('[pair] active=1 → temp=26: power_off:false AND temp:26', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(26);
+    expect(lastCmd()).toMatchObject({ power_off: false, temp: 26 });
+  });
+  it('[pair] active=1 → fan=60%: power_off:false AND fan:3', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(60);
+    expect(lastCmd()).toMatchObject({ power_off: false, fan: 3 });
+  });
+  it('[pair] active=1 → fan-auto ON: power_off:false AND fan:auto', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    mockAxios.mockClear();
+    await sh(fanauto.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toMatchObject({ power_off: false, fan: 'auto' });
+  });
+  it('[pair] mode=heat → active=1: active carries; mode also correct', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    expect(lastCmd()).toMatchObject({ mode: 'heat', power_off: false });
+  });
+  it('[pair] temp=22 → active=0: power-off includes current temp', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(22);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.Active))(0);
+    expect(lastCmd()).toMatchObject({ temp: 22, power_off: true });
+  });
+  it('[pair] hswing=ON → mode=cool: hswing persists in next command', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    expect(lastCmd()).toMatchObject({ hswing: true, mode: 'cool', swing: false });
+  });
+  it('[pair] hswing=ON → temp=22: hswing persists in next command', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(22);
+    expect(lastCmd()).toMatchObject({ hswing: true, temp: 22, swing: false });
+  });
+  it('[pair] hswing=ON → fan=80%: hswing persists in next command', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(80);
+    expect(lastCmd()).toMatchObject({ hswing: true, fan: 4, swing: false });
+  });
+  it('[pair] hswing=ON → active=1: hswing persists, power comes on', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    expect(lastCmd()).toMatchObject({ hswing: true, power_off: false, swing: false });
+  });
+  it('[pair] hswing=ON → vswing tap: tap sends swing:true AND hswing:true', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toMatchObject({ swing: true, hswing: true });
+  });
+  it('[pair] vswing tap → hswing=ON: swing resets, hswing:true in command', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toMatchObject({ swing: false, hswing: true });
+  });
+  it('[pair] fan-auto ON → mode change: fan stays auto', async () => {
+    await sh(fanauto.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    expect(lastCmd()).toMatchObject({ fan: 'auto', mode: 'heat' });
+  });
+  it('[pair] fan-auto ON → temp change: fan stays auto', async () => {
+    await sh(fanauto.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(26);
+    expect(lastCmd()).toMatchObject({ fan: 'auto', temp: 26 });
+  });
+
+  // ── Triple sequences ───────────────────────────────────────────────────────
+  it('[seq] power-on → mode=cool → temp=22: all three fields correct', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(22);
+    expect(lastCmd()).toMatchObject({ power_off: false, mode: 'cool', temp: 22, swing: false, hswing: false });
+  });
+  it('[seq] mode=heat → fan=80% → temp=28: all three fields correct', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(80);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(28);
+    expect(lastCmd()).toMatchObject({ mode: 'heat', fan: 4, temp: 28 });
+  });
+  it('[seq] hswing=ON → vswing tap → mode=auto: swing=false, hswing=true after tap', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(0);
+    expect(lastCmd()).toMatchObject({ mode: 'auto', swing: false, hswing: true });
+  });
+  it('[seq] power-on → hswing=ON → swing tap → temp=24: full state correct', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
+    expect(lastCmd()).toMatchObject({ power_off: false, hswing: true, swing: false, temp: 24 });
+  });
+  it('[seq] mode=cool → temp=18 → fan=100% → active=1: complete state snapshot', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(18);
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(100);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    expect(lastCmd()).toEqual({ mode: 'cool', temp: 18, fan: 5, swing: false, hswing: false, power_off: false });
   });
 });
