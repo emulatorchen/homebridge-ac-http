@@ -150,8 +150,7 @@ export class AcHttpAccessory {
               if (this.cfg.command) await this.sendCommand();
               else if (this.cfg.swingVertical?.set) await this.safeSet(this.cfg.swingVertical.set, 1, 'SwingVertical');
             } finally {
-              // state.swingVertical stays at 1 so subsequent sendCommand calls (fan, temp, etc.)
-              // carry the last commanded swing value forward instead of resetting the physical vane.
+              this.state.swingVertical = 0;  // one-shot: don't poison subsequent commands
               setTimeout(() => swingSvc.updateCharacteristic(this.platform.Characteristic.On, false), 300);
             }
           });
