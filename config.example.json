@@ -78,6 +78,24 @@
 
       "accessories": [
         {
+          "_comment": "Standalone (no template) — host goes directly in the URL",
+          "name": "Office AC",
+          "serial": "OF-001",
+          "command": {
+            "url": "http://192.168.1.5/api/ir/send",
+            "method": "POST",
+            "body": "{\"power\":\"{active}\",\"mode\":\"{mode}\",\"temp\":{temperature},\"fan\":\"{fanSpeed}\"}",
+            "map": {
+              "active":   { "0": "off",  "1": "on" },
+              "mode":     { "0": "auto", "1": "heat", "2": "cool" },
+              "fanSpeed": { "0": "auto", "20": "1", "60": "3", "100": "5" }
+            }
+          },
+          "swingVertical": { "stateless": true }
+        },
+
+        {
+          "_comment": "Template-based — host is on the AC unit; template carries the shared URL pattern",
           "name": "Living Room AC",
           "serial": "LR-001",
           "template": "maxe-rc14",

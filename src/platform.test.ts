@@ -9,7 +9,8 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 import path from 'path';
-import { AcHttpPlatform } from './platform.js';
+import { AcHttpPlatform, resolveTemplate, substituteVars } from './platform.js';
+import type { AcDeviceConfig, AcTemplateConfig } from './types.js';
 const req = createRequire(import.meta.url);
 // hap-nodejs is @homebridge/hap-nodejs on HB 2.x, hap-nodejs on HB 1.x
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,6 +55,72 @@ function getName(acc: typeof PlatformAccessory): string {
     .getService(Service.AccessoryInformation)
     ?.getCharacteristic(Characteristic.Name)?.value as string;
 }
+
+// ── Template resolution — host/port belong to the accessory, not the template ─
+describe('resolveTemplate — host is accessory-only, not a template field', () => {
+  const template: AcTemplateConfig = {
+    command: {
+      url: 'http://{host}/api/send',
+      method: 'POST',
+      body: '{"power":"{active}"}',
+    },
+    minTemp: 16,
+    maxTemp: 30,
+  };
+  const templates = { 'my-model': template };
+
+  it('{host} placeholder in template URL is replaced with accessory host', () => {
+    const cfg: AcDeviceConfig = { name: 'Living Room AC', template: 'my-model', host: '192.168.1.10' };
+    const resolved = resolveTemplate(cfg, templates);
+    expect(resolved.command?.url).toBe('http://192.168.1.10/api/send');
+  });
+
+  it('{port} placeholder is replaced with accessory port (default 80)', () => {
+    const tpl: AcTemplateConfig = { stateUrl: 'http://{host}:{port}/status' };
+    const cfg: AcDeviceConfig = { name: 'AC', template: 't', host: '10.0.0.5' };
+    const resolved = resolveTemplate(cfg, { t: tpl });
+    expect(resolved.stateUrl).toBe('http://10.0.0.5:80/status');
+  });
+
+  it('{port} uses explicit accessory port when set', () => {
+    const tpl: AcTemplateConfig = { stateUrl: 'http://{host}:{port}/status' };
+    const cfg: AcDeviceConfig = { name: 'AC', template: 't', host: '10.0.0.5', port: 8080 };
+    const resolved = resolveTemplate(cfg, { t: tpl });
+    expect(resolved.stateUrl).toBe('http://10.0.0.5:8080/status');
+  });
+
+  it('accessory field overrides same field in template', () => {
+    const tpl: AcTemplateConfig = { minTemp: 16, maxTemp: 30 };
+    const cfg: AcDeviceConfig = { name: 'AC', template: 't', host: '10.0.0.1', maxTemp: 28 };
+    const resolved = resolveTemplate(cfg, { t: tpl });
+    expect(resolved.maxTemp).toBe(28);
+  });
+
+  it('returns cfg unchanged when no template is referenced', () => {
+    const cfg: AcDeviceConfig = { name: 'AC', host: '10.0.0.1' };
+    expect(resolveTemplate(cfg, templates)).toBe(cfg);
+  });
+
+  it('returns cfg unchanged when referenced template does not exist', () => {
+    const cfg: AcDeviceConfig = { name: 'AC', template: 'unknown' };
+    expect(resolveTemplate(cfg, templates)).toBe(cfg);
+  });
+
+  it('substituteVars leaves unknown placeholders untouched', () => {
+    expect(substituteVars('http://{host}/{unknown}', { host: '1.2.3.4' }))
+      .toBe('http://1.2.3.4/{unknown}');
+  });
+
+  it('AcTemplateConfig type does not include host or port (compile-time enforcement)', () => {
+    // This test documents the type-level invariant: if the line below compiled
+    // with host/port it would mean the types drifted. TypeScript enforces this
+    // at build time; the runtime check here is a canary.
+    const t: AcTemplateConfig = { minTemp: 16 };
+    // @ts-expect-error — host is not a valid template field
+    const _withHost = { ...t, host: '1.2.3.4' } satisfies AcTemplateConfig;
+    expect(t).not.toHaveProperty('host');
+  });
+});
 
 // ── HAP name chain proof ──────────────────────────────────────────────────────
 // Pins the two source-level facts that guarantee labels appear in iOS:
