@@ -8,6 +8,9 @@ on:
         required: false
         default: patch
 
+permissions:
+  contents: read
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -26,17 +29,33 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci --ignore-scripts
       - name: Compute next version, tag, push
+        env:
+          BUMP: ${{ inputs.bump }}
         run: |
+          case "$BUMP" in
+            patch|minor|major) ;;
+            *) echo "Invalid bump: $BUMP"; exit 1 ;;
+          esac
           LATEST=$(git tag --sort=-v:refname | grep '^v' | head -1 | sed 's/^v//')
           if [ -n "$LATEST" ]; then
             npm version "$LATEST" --no-git-tag-version 2>/dev/null || true
           fi
-          npm version ${{ inputs.bump }} --no-git-tag-version
+          npm version "$BUMP" --no-git-tag-version
           VERSION=$(node -p "require('./package.json').version")
           git tag "v${VERSION}"
           git push origin "v${VERSION}"
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
+      - run: npm audit --audit-level=high --registry https://registry.npmjs.org
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          scanners: vuln,config
+          skip-files: Dockerfile.test
       - run: npm run build
+      - run: npm test
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

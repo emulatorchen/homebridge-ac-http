@@ -14,7 +14,7 @@
     "config.example.json"
   ],
   "engines": {
-    "node": ">=18.0.0",
+    "node": ">=20.0.0",
     "homebridge": ">=1.6.0"
   },
   "scripts": {
@@ -66,7 +66,7 @@
   },
   "devDependencies": {
     "homebridge": "^2.0.0",
-    "typescript": "^5.4.0",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.6"
   },
   "peerDependencies": {

@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   security:
     runs-on: ubuntu-latest
@@ -16,10 +19,31 @@ jobs:
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
-          scan-ref: node_modules
+          scan-ref: .
           exit-code: '1'
           severity: HIGH,CRITICAL
-          scanners: vuln
+          scanners: vuln,config
+          skip-files: Dockerfile.test
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - hb-version: '2'
+            node-version: '22'
+          - hb-version: '1'
+            node-version: '20'
+    name: Test on Homebridge ${{ matrix.hb-version }}.x
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci --ignore-scripts
+      - run: npm install homebridge@^${{ matrix.hb-version }} --no-save --ignore-scripts
+      - run: npm run build
+      - run: npm test
 
   build:
     runs-on: ubuntu-latest
@@ -37,11 +61,15 @@ jobs:
           path: homebridge-ac-http-*.tgz
 
   validate:
-    needs: build
+    needs: [build, security]
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        hb-version: ['1', '2']
+        include:
+          - hb-version: '2'
+            node-version: '22'
+          - hb-version: '1'
+            node-version: '20'
     name: Validate on Homebridge ${{ matrix.hb-version }}.x
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -49,11 +77,11 @@ jobs:
           name: plugin-tarball
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node-version }}
       - name: Test plugin registers on Homebridge ${{ matrix.hb-version }}.x
         run: |
-          npm install -g homebridge@^${{ matrix.hb-version }} 2>&1 | tail -3
-          npm install -g homebridge-ac-http-*.tgz 2>&1 | tail -3
+          npm install -g homebridge@^${{ matrix.hb-version }} --ignore-scripts 2>&1 | tail -3
+          npm install -g homebridge-ac-http-*.tgz --ignore-scripts 2>&1 | tail -3
           PLUGIN_PATH=$(npm root -g)/homebridge-ac-http
           node -e "
             const api = { registerPlatform: (n, alias) => { console.log('AcHttpPlatform:', alias); process.exit(0); } };
@@ -61,3 +89,47 @@ jobs:
             (mod.default || mod)(api);
           " | tee /tmp/hb.log
           grep -q "AcHttpPlatform" /tmp/hb.log
+
+  hap-verify:
+    needs: [build, security]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - hb-version: '2'
+            service: hap-verify
+            bridge: homebridge-test
+            log: /tmp/hap-v2.log
+          - hb-version: '1'
+            service: hap-verify-v1
+            bridge: homebridge-test-v1
+            log: /tmp/hap-v1.log
+    name: HAP verify on Homebridge ${{ matrix.hb-version }}.x
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Verify all companion tile names via real HAP pairing (HB ${{ matrix.hb-version }}.x)
+        run: |
+          docker compose -f docker-compose.test.yml up \
+            --build --abort-on-container-exit --exit-code-from ${{ matrix.service }} \
+            ${{ matrix.bridge }} ${{ matrix.service }} 2>&1 | tee ${{ matrix.log }} || true
+          # English accessory
+          grep -F "TILE: Living Room MAXE AC" ${{ matrix.log }}
+          grep -F "TILE: Living Room MAXE AC Fan Auto" ${{ matrix.log }}
+          grep -F "TILE: Living Room MAXE AC Swing" ${{ matrix.log }}
+          grep -F "TILE: Living Room MAXE AC H-Swing" ${{ matrix.log }}
+          grep -F "TILE: Living Room MAXE AC Humidity" ${{ matrix.log }}
+          # ja accessory — proves Japanese labels flow through HAP end-to-end
+          grep -F "TILE: リビングエアコン" ${{ matrix.log }}
+          grep -F "TILE: リビングエアコン 自動" ${{ matrix.log }}
+          grep -F "TILE: リビングエアコン スイング" ${{ matrix.log }}
+          grep -F "TILE: リビングエアコン 水平スイング" ${{ matrix.log }}
+          grep -F "TILE: リビングエアコン 湿度" ${{ matrix.log }}
+          # zh-TW accessory — proves Traditional Chinese labels flow through HAP end-to-end
+          grep -F "TILE: 客廳冷氣" ${{ matrix.log }}
+          grep -F "TILE: 客廳冷氣 自動" ${{ matrix.log }}
+          grep -F "TILE: 客廳冷氣 擺風" ${{ matrix.log }}
+          grep -F "TILE: 客廳冷氣 水平擺風" ${{ matrix.log }}
+          grep -F "TILE: 客廳冷氣 濕度" ${{ matrix.log }}
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v

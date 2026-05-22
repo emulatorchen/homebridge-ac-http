@@ -14,7 +14,7 @@ export const TRANSLATIONS: Record<string, Labels> = {
   de:      { swing: 'Schwingung',   hSwing: 'H-Schwingung',   fanAuto: 'Auto',     humidity: 'Luftfeuchtigkeit'  },
   fr:      { swing: 'Oscillation',  hSwing: 'Oscillation H',  fanAuto: 'Auto',     humidity: 'Humidité'          },
   es:      { swing: 'Oscilación',   hSwing: 'Oscilación H',   fanAuto: 'Auto',     humidity: 'Humedad'           },
-  it:      { swing: 'Oscillazione', hSwing: 'Oscillazione O', fanAuto: 'Auto',     humidity: 'Umidità'           },
+  it:      { swing: 'Oscillazione', hSwing: 'Oscillazione H', fanAuto: 'Auto',     humidity: 'Umidità'           },
   pt:      { swing: 'Oscilação',    hSwing: 'Oscilação H',    fanAuto: 'Auto',     humidity: 'Humidade'          },
   nl:      { swing: 'Schommeling',  hSwing: 'H-Schommeling',  fanAuto: 'Auto',     humidity: 'Vochtigheid'       },
 };

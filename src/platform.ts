@@ -28,6 +28,7 @@ export class AcHttpPlatform implements DynamicPlatformPlugin {
   public readonly api:            API;
   private readonly accessories = new Map<string, PlatformAccessory>();
   private readonly handlers    = new Map<string, AcHttpAccessory>();
+  private readonly seen        = new Set<string>();
 
   constructor(public readonly log: Logger, public readonly config: PlatformConfig, api: API) {
     this.api            = api;
@@ -38,21 +39,31 @@ export class AcHttpPlatform implements DynamicPlatformPlugin {
 
   configureAccessory(accessory: PlatformAccessory): void { this.accessories.set(accessory.UUID, accessory); }
 
+  registerCompanion(uuid: string, name: string): PlatformAccessory {
+    this.seen.add(uuid);
+    const existing = this.accessories.get(uuid);
+    if (existing) return existing;
+    const acc = new this.api.platformAccessory(name, uuid);
+    this.accessories.set(uuid, acc);
+    this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [acc]);
+    return acc;
+  }
+
   private discoverDevices(): void {
+    this.seen.clear();
     const platformConfig = this.config as unknown as AcHttpPlatformConfig;
     const rawTemplates   = platformConfig.templates ?? {};
     const templates: Record<string, AcTemplateConfig> = Array.isArray(rawTemplates)
       ? Object.fromEntries((rawTemplates as AcTemplateEntry[]).map(t => { const { name, ...rest } = t; return [name, rest]; }))
       : rawTemplates as Record<string, AcTemplateConfig>;
     const devices        = platformConfig.accessories ?? [];
-    const seen           = new Set<string>();
 
     const platformLanguage = platformConfig.language;
     for (const rawCfg of devices) {
       const resolved = resolveTemplate(rawCfg, templates);
       const cfg = (platformLanguage && !resolved.language) ? { ...resolved, language: platformLanguage } : resolved;
       const uuid = this.api.hap.uuid.generate(cfg.serial ?? cfg.name);
-      seen.add(uuid);
+      this.seen.add(uuid);
       const existing = this.accessories.get(uuid);
       if (existing) {
         this.log.info(`Restoring: ${cfg.name}`);
@@ -69,7 +80,7 @@ export class AcHttpPlatform implements DynamicPlatformPlugin {
     }
 
     for (const [uuid, acc] of this.accessories) {
-      if (!seen.has(uuid)) {
+      if (!this.seen.has(uuid)) {
         this.log.info(`Removing: ${acc.displayName}`);
         this.handlers.get(uuid)?.onDestroy();
         this.handlers.delete(uuid);

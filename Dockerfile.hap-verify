@@ -1,0 +1,16 @@
+# node:22-slim
+FROM node@sha256:7af03b14a13c8cdd38e45058fd957bf00a72bbe17feac43b1c15a689c029c732
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ bluetooth libbluetooth-dev libudev-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+RUN npm init -y && npm install hap-controller@0.10.2 --ignore-scripts && \
+    chown -R node:node /app
+USER node
+COPY scripts/hap-verify.mjs ./hap-verify.mjs
+
+ENV HAP_PORT=51826
+ENV HAP_PIN=031-45-154
+CMD sh -c "sleep 12 && node hap-verify.mjs 127.0.0.1 ${HAP_PORT} ${HAP_PIN}"

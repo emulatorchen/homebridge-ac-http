@@ -17,6 +17,57 @@ services:
     environment:
       - HOMEBRIDGE_CONFIG_UI_PORT=8582
 
+  # Self-contained test bridge (HB 2.x) — builds plugin from source, exposes HAP on port 51826.
+  # Run: docker compose -f docker-compose.test.yml up --build homebridge-test hap-verify
+  homebridge-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+      args:
+        NODE_SHA: sha256:7af03b14a13c8cdd38e45058fd957bf00a72bbe17feac43b1c15a689c029c732  # node:22-slim
+        HB_VERSION: '2'
+        CONFIG_FILE: docker-test-config.json
+    network_mode: host
+    environment:
+      - HOMEBRIDGE_CONFIG_UI_PORT=8583
+
+  # HAP client: pairs with homebridge-test (HB 2.x, port 51826).
+  hap-verify:
+    build:
+      context: .
+      dockerfile: Dockerfile.hap-verify
+    network_mode: host
+    depends_on:
+      - homebridge-test
+    environment:
+      - HAP_PORT=51826
+      - HAP_PIN=031-45-154
+
+  # Self-contained test bridge (HB 1.x) — exposes HAP on port 51827.
+  homebridge-test-v1:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+      args:
+        NODE_SHA: sha256:f9ab18e354e6855ae56ef2b290dd225c1e51a564f87584b9bd21dd651838830e  # node:18-slim
+        HB_VERSION: '1'
+        CONFIG_FILE: docker-test-config-v1.json
+    network_mode: host
+    environment:
+      - HOMEBRIDGE_CONFIG_UI_PORT=8584
+
+  # HAP client: pairs with homebridge-test-v1 (HB 1.x, port 51827).
+  hap-verify-v1:
+    build:
+      context: .
+      dockerfile: Dockerfile.hap-verify
+    network_mode: host
+    depends_on:
+      - homebridge-test-v1
+    environment:
+      - HAP_PORT=51827
+      - HAP_PIN=031-45-154
+
 volumes:
   hb1-data:
   hb2-data:
