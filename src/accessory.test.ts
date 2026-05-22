@@ -937,6 +937,112 @@ describe('MAXE command — each button while AC is powered off (active=0)', () =
   });
 });
 
+// ── MAXE command: every button while AC is powered ON (active=1) ─────────────
+// Mirror of the power-off suite: same button types, active=1 set first,
+// every command must have power_off:false.
+// Most critical: swing tap while ON — this is exactly the scenario the bug caused.
+describe('MAXE command — each button while AC is powered on (active=1)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let hapAcc: any, heater: Service, vswing: Service, hswing: Service, fanauto: Service;
+
+  beforeEach(async () => {
+    mockAxios.mockClear();
+    hapAcc  = makeMaxeAcc();
+    heater  = hapAcc.services.find((s: Service) => s.UUID === Service.HeaterCooler.UUID);
+    vswing  = hapAcc.services.find((s: Service) => s.subtype === 'vswing');
+    hswing  = hapAcc.services.find((s: Service) => s.subtype === 'hswing');
+    fanauto = hapAcc.services.find((s: Service) => s.subtype === 'fanauto');
+    // Power on first — all tests in this suite start with active=1
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    mockAxios.mockClear();
+  });
+
+  it('mode=auto while ON → power_off:false + mode:auto', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(0);
+    expect(lastCmd()).toMatchObject({ power_off: false, mode: 'auto', swing: false, hswing: false });
+  });
+  it('mode=heat while ON → power_off:false + mode:heat', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    expect(lastCmd()).toMatchObject({ power_off: false, mode: 'heat', swing: false });
+  });
+  it('mode=cool while ON → power_off:false + mode:cool', async () => {
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    expect(lastCmd()).toMatchObject({ power_off: false, mode: 'cool', swing: false });
+  });
+  it('temp=22 while ON → power_off:false + temp:22', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(22);
+    expect(lastCmd()).toMatchObject({ power_off: false, temp: 22, swing: false });
+  });
+  it('temp=16 (min) while ON → power_off:false + temp:16', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(16);
+    expect(lastCmd()).toMatchObject({ power_off: false, temp: 16 });
+  });
+  it('temp=30 (max) while ON → power_off:false + temp:30', async () => {
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(30);
+    expect(lastCmd()).toMatchObject({ power_off: false, temp: 30 });
+  });
+
+  // All 6 fan-speed thresholds while powered ON
+  const FAN_ON_CASES: [number, string | number][] = [
+    [0, 'auto'], [20, 1], [40, 2], [60, 3], [80, 4], [100, 5],
+  ];
+  for (const [pct, expected] of FAN_ON_CASES) {
+    it(`fan ${pct}% while ON → power_off:false + fan:${expected}`, async () => {
+      await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(pct);
+      expect(lastCmd()).toMatchObject({ power_off: false, fan: expected, swing: false });
+    });
+  }
+
+  it('fan-auto ON while ON → power_off:false + fan:auto', async () => {
+    await sh(fanauto.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toMatchObject({ power_off: false, fan: 'auto', swing: false });
+  });
+  it('fan-auto OFF while ON → power_off:false + fan:1', async () => {
+    await sh(fanauto.getCharacteristic(Characteristic.On))(false);
+    expect(lastCmd()).toMatchObject({ power_off: false, fan: 1, swing: false });
+  });
+
+  // ── Critical: swing tap while ON ────────────────────────────────────────────
+  // This is the exact scenario from the bug: swing tap while AC is running.
+  // The command must have swing:true AND power_off:false.
+  it('swing tap while ON → power_off:false + swing:true (one-shot)', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toMatchObject({ power_off: false, swing: true });
+  });
+  it('swing reset (v=false) while ON → no command sent', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(false);
+    expect(mockAxios.mock.calls.length).toBe(0);
+  });
+  it('[REGRESSION] swing tap while ON then mode change → swing:false + power_off:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    expect(lastCmd()).toMatchObject({ swing: false, power_off: false, mode: 'cool' });
+  });
+  it('[REGRESSION] swing tap while ON then fan change → swing:false + power_off:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(60);
+    expect(lastCmd()).toMatchObject({ swing: false, power_off: false, fan: 3 });
+  });
+
+  // ── hswing while ON ──────────────────────────────────────────────────────────
+  it('hswing ON while ON → power_off:false + hswing:true', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toMatchObject({ power_off: false, hswing: true, swing: false });
+  });
+  it('hswing OFF while ON (stateless: always fires) → power_off:false + hswing:false', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(false);
+    expect(lastCmd()).toMatchObject({ power_off: false, hswing: false, swing: false });
+  });
+  it('hswing ON then OFF while ON → hswing:false + power_off:false', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(hswing.getCharacteristic(Characteristic.On))(false);
+    expect(lastCmd()).toMatchObject({ power_off: false, hswing: false, swing: false });
+  });
+});
+
 // ── Stateful vswing and hswing (no stateless:true) ────────────────────────────
 // Stateful swing persists in state so subsequent commands carry the last set
 // value — this is intentionally different from stateless (one-shot) swing.
