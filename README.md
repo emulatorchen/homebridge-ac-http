@@ -25,8 +25,10 @@
 
 | Homebridge | Node.js | Status     |
 |------------|---------|------------|
-| 1.6.x – 1.x | >= 20  | Supported  |
-| 2.0.x       | >= 22  | Supported  |
+| 1.x (apt-pkg ≥ 1.2.0, April 2024+) | 20 | Supported |
+| 2.0.x       | 22  | Supported  |
+
+This plugin requires **Node.js 20**. For Homebridge 1.x, that means you need a build from April 2024 or later — specifically `homebridge-apt-pkg` v1.2.0–v1.3.12, which is the version range that shipped Node 20. These builds are available as the [`legacy` tag on Docker Hub](https://hub.docker.com/r/homebridge/homebridge/tags?name=legacy). Older 1.x installs (Node 18) are not supported.
 
 ## What it looks like in HomeKit
 
@@ -320,8 +322,8 @@ npm run build
 docker compose -f docker-compose.test.yml up
 ```
 
-- Homebridge 1.x UI: http://localhost:8581
-- Homebridge 2.x UI: http://localhost:8582
+- Homebridge 1.x UI: http://localhost:8581 — uses [`homebridge/homebridge:legacy`](https://hub.docker.com/r/homebridge/homebridge/tags?name=legacy) (Node 20, apt-pkg v1.2.0–v1.3.12)
+- Homebridge 2.x UI: http://localhost:8582 — uses `homebridge/homebridge:latest`
 
 Add your plugin config via the Homebridge UI on first run.
 
