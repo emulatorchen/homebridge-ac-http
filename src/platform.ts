@@ -39,16 +39,6 @@ export class AcHttpPlatform implements DynamicPlatformPlugin {
 
   configureAccessory(accessory: PlatformAccessory): void { this.accessories.set(accessory.UUID, accessory); }
 
-  registerCompanion(uuid: string, name: string): PlatformAccessory {
-    this.seen.add(uuid);
-    const existing = this.accessories.get(uuid);
-    if (existing) return existing;
-    const acc = new this.api.platformAccessory(name, uuid);
-    this.accessories.set(uuid, acc);
-    this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [acc]);
-    return acc;
-  }
-
   private discoverDevices(): void {
     this.seen.clear();
     const platformConfig = this.config as unknown as AcHttpPlatformConfig;

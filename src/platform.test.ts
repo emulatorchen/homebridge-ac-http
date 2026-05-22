@@ -180,11 +180,11 @@ describe('label persistence guarantees', () => {
     const config = { platform: 'AcHttpPlatform', accessories: [{ name: 'Living Room MAXE AC', serial: 'MAXE-001', pollInterval: 0, swingVertical: { stateless: true } }] };
     const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
 
-    // First boot — registers main + companion
+    // First boot — registers main accessory only (secondary services are linked, not separate)
     const platform1 = new AcHttpPlatform(log as never, config as never, api as never);
     launchCb!();
     const firstBoot = [...registered];
-    expect(firstBoot.length).toBe(2); // main + swing companion
+    expect(firstBoot.length).toBe(1); // main accessory only
 
     // Simulate restart: Homebridge calls configureAccessory for each cached accessory
     registered.length = 0;
@@ -193,12 +193,12 @@ describe('label persistence guarantees', () => {
     for (const acc of firstBoot) platform2.configureAccessory(acc as never); // restore from cache
     launchCb!();
 
-    // On restart, companions already exist in cache — registerPlatformAccessories NOT called again
+    // On restart, main accessory already exists in cache — registerPlatformAccessories NOT called again
     expect(registered.length).toBe(0);
   });
 });
 
-describe('platform integration — companion accessory tile labels', () => {
+describe('platform integration — accessory registration', () => {
   const BASE_CONFIG = {
     accessories: [{
       name: 'Living Room MAXE AC',
@@ -211,55 +211,17 @@ describe('platform integration — companion accessory tile labels', () => {
     }],
   };
 
-  it('registers the main AC accessory with correct name', () => {
+  it('registers exactly 1 accessory per AC device (secondary services are linked, not separate)', () => {
     const { registered } = makeFakeApi(BASE_CONFIG);
-    const main = registered.find(a => getName(a) === 'Living Room MAXE AC');
-    expect(main).toBeDefined();
+    expect(registered.length).toBe(1);
   });
 
-  it('registers a Swing companion with correct AccessoryInformation.Name', () => {
+  it('registers the main AC accessory with correct AccessoryInformation.Name', () => {
     const { registered } = makeFakeApi(BASE_CONFIG);
-    const swing = registered.find(a => getName(a) === 'Living Room MAXE AC Swing');
-    expect(swing).toBeDefined();
-    expect(getName(swing!)).toBe('Living Room MAXE AC Swing');
+    expect(getName(registered[0])).toBe('Living Room MAXE AC');
   });
 
-  it('registers a Fan Auto companion with correct AccessoryInformation.Name', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    const fa = registered.find(a => getName(a) === 'Living Room MAXE AC Fan Auto');
-    expect(fa).toBeDefined();
-    expect(getName(fa!)).toBe('Living Room MAXE AC Fan Auto');
-  });
-
-  it('registers an H-Swing companion with correct AccessoryInformation.Name', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    const hs = registered.find(a => getName(a) === 'Living Room MAXE AC H-Swing');
-    expect(hs).toBeDefined();
-    expect(getName(hs!)).toBe('Living Room MAXE AC H-Swing');
-  });
-
-  it('registers a Humidity companion with correct AccessoryInformation.Name', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    const hum = registered.find(a => getName(a) === 'Living Room MAXE AC Humidity');
-    expect(hum).toBeDefined();
-    expect(getName(hum!)).toBe('Living Room MAXE AC Humidity');
-  });
-
-  it('registers exactly 5 accessories total (1 main + 4 companions)', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    expect(registered.length).toBe(5);
-  });
-
-  it('companion names contain the AC name as prefix', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    const companions = registered.filter(a => getName(a) !== 'Living Room MAXE AC');
-    expect(companions.length).toBe(4);
-    for (const acc of companions) {
-      expect(getName(acc)).toMatch(/^Living Room MAXE AC /);
-    }
-  });
-
-  it('two ACs produce independent companions with correct names', () => {
+  it('two ACs produce exactly 2 registered accessories', () => {
     const config = {
       accessories: [
         { name: 'Living Room AC', serial: 'AC-001', pollInterval: 0, swingVertical: { stateless: true } },
@@ -267,7 +229,8 @@ describe('platform integration — companion accessory tile labels', () => {
       ],
     };
     const { registered } = makeFakeApi(config);
-    expect(registered.find(a => getName(a) === 'Living Room AC Swing')).toBeDefined();
-    expect(registered.find(a => getName(a) === 'Bedroom AC Swing')).toBeDefined();
+    expect(registered.length).toBe(2);
+    expect(registered.find(a => getName(a) === 'Living Room AC')).toBeDefined();
+    expect(registered.find(a => getName(a) === 'Bedroom AC')).toBeDefined();
   });
 });
