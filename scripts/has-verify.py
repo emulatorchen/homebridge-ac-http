@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
 """
-scripts/has-verify.py  —  screenshot each companion tile name in Apple's
+scripts/has-verify.py  —  screenshot each main AC tile name in Apple's
 HomeKit Accessory Simulator (HAS) as visual proof the plugin labels work.
 
-Builds each .hasaccessory file entirely from scratch using plistlib —
-no template file required, no sensitive data embedded. Uses safe test
-values only (PIN 031-45-154, generic BLE identifier).
+Patches the AccessoryInformation.Name in the host Mac's own HAS BLE-adapter
+file — this guarantees the plist format is always accepted by HAS. On first
+run the script launches HAS briefly so it writes its BLE adapter file, then
+uses that as the template for every test tile.
 
 What this verifies
 ------------------
-• All 5 companion tiles appear as separate accessories, not merged into one.
-• Each tile name matches what the iOS Home app reads via the HAP protocol.
-• Companion-accessory registration works (the broken "linked service" pattern
-  causes tiles to silently disappear from room view in iOS).
-• Name encoding is correct — no trailing spaces, correct capitalisation.
+• Each main AC tile name (English, Japanese, Traditional Chinese) renders
+  correctly in HAS — correct encoding, capitalisation, no garbled characters.
+• AccessoryInformation.Name is set from the plugin's configured name.
+
+What this does NOT verify (use the HAP pipeline instead)
+---------------------------------------------------------
+• Secondary service labels (Swing, Fan Auto, H-Swing, Humidity) — these are
+  linked services inside the AC panel, not separate HAS tiles. HAS has no
+  visual for service-level Name characteristics. The HAP verify pipeline
+  (hap-verify.mjs) reads and asserts all LINKED: labels via the real protocol.
+• Tile topology — that secondary services stay inside the AC panel and do not
+  appear as independent room tiles. Verified by the HAP pipeline write test.
 
 Bugs this catches
 -----------------
-• Companion tiles disappearing from room view (regression to linked services)
-• Wrong or stale tile label (e.g. accessory renamed but Homebridge served stale cache)
-• Service subtype collision (duplicate subtypes cause one tile to silently drop)
-• ConfiguredName characteristic missing (label falls back to service type string)
+• Wrong or garbled main tile label (encoding issue, wrong language string)
+• AccessoryInformation.Name not set from plugin config name
 
 Requirements
 ------------
@@ -34,11 +40,12 @@ Usage
   python3 scripts/has-verify.py /tmp/shots   # custom output directory
 
 This script is NOT part of CI. For automated CI verification use the Docker
-HAP verify pipeline, which proves the same names via the real HAP protocol:
+HAP verify pipeline, which proves tile names and linked service labels via
+the real HAP protocol:
   docker compose -f docker-compose.test.yml up --build homebridge-test hap-verify
 """
 
-import plistlib, subprocess, sys, time, pathlib
+import plistlib, struct, subprocess, sys, time, pathlib
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 HAS_APP = pathlib.Path("/Applications/HomeKit Accessory Simulator.app")
@@ -47,186 +54,189 @@ HAS_LIB = (pathlib.Path.home()
            / "HomeKit Accessory Simulator.haslibrary")
 OUT_DIR = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path("docs/has-screenshots")
 
-# ── Tiles to verify ───────────────────────────────────────────────────────────
+# ── Main AC tiles to verify ───────────────────────────────────────────────────
+# HAS shows one tile per .hasaccessory file (AccessoryInformation.Name).
+# Secondary service labels (Swing, Fan Auto, H-Swing, Humidity) are linked
+# services inside each AC panel — verified by hap-verify.mjs, not here.
 TILES = [
-    "Living Room MAXE AC",            # main HeaterCooler
-    "Living Room MAXE AC Fan Auto",   # companion Switch — fan speed auto
-    "Living Room MAXE AC Swing",      # companion Switch — vertical swing
-    "Living Room MAXE AC H-Swing",    # companion Switch — horizontal swing
-    "Living Room MAXE AC Humidity",   # companion HumiditySensor
+    "Living Room MAXE AC",  # English
+    "リビングエアコン",          # Japanese
+    "客廳冷氣",                # Traditional Chinese
 ]
 
 
-def _build_hasaccessory(name: str) -> bytes:
+# ── Plist template helpers ────────────────────────────────────────────────────
+
+def _patch_name(template_data: bytes, new_name: str) -> bytes:
     """
-    Build a minimal valid .hasaccessory binary plist from scratch.
+    Patch AccessoryInformation.Name in a real HAS .hasaccessory file.
 
-    HAS opens this with NSKeyedUnarchiver; the structure replicates what
-    plistlib produces when round-tripping a real HAS file. Safe test values
-    only — no PIN, BLE identifier, or setupID from any prior session.
+    Uses binary editing to avoid a plistlib round-trip, which is lossy for
+    NSKeyedArchiver plists (plistlib inlines primitive UID references,
+    producing a structurally different file that HAS rejects as corrupted).
+
+    Strategy:
+      1. Parse with plistlib (read-only) to locate the Name string's object
+         index in the NSKeyedArchiver $objects table.
+      2. Use the binary plist offset table to find the exact byte position of
+         that object in the raw file.
+      3. Read the existing encoded bytes directly from the file (no encoding
+         assumption) and replace them with the new name's encoding.
+      4. Shift all offset-table entries that point past the replaced bytes,
+         and update the offset-table pointer in the trailer.
+
+    Everything outside the replaced string bytes is byte-identical to the
+    original file, so HAS always accepts it.
     """
-    UID = plistlib.UID
-    objs: list = ['$null']
+    ACC_INFO_UUID_SHORT = 0x3E
+    NAME_UUID_SHORT     = 0x23
 
-    def add(obj) -> UID:
-        idx = len(objs)
-        objs.append(obj)
-        return UID(idx)
+    # ── Step 1: parse (read-only) to find the Name UID index ─────────────────
+    d    = plistlib.loads(template_data)
+    objs = d['$objects']
 
-    def reserve() -> UID:
-        idx = len(objs)
-        objs.append(None)
-        return UID(idx)
+    root    = objs[d['$top']['root'].data]
+    keys    = [objs[k.data] if hasattr(k, 'data') else k for k in root['NS.keys']]
+    acc_idx = next(i for i, k in enumerate(keys) if k == 'accessory')
+    acc     = objs[root['NS.objects'][acc_idx].data]
 
-    def fill(uid: UID, obj) -> None:
-        objs[uid.data] = obj
+    name_uid_idx = None
+    for svc_uid in objs[acc['HAK.services'].data]['NS.objects']:
+        svc       = objs[svc_uid.data]
+        svc_uuid  = objs[objs[svc['HAK.uuid'].data]['HAK.uuid'].data]
+        svc_short = int.from_bytes(svc_uuid['NS.uuidbytes'][:4], 'big')
+        if svc_short != ACC_INFO_UUID_SHORT:
+            continue
+        for char_uid in objs[svc['HAK.characteristics'].data]['NS.objects']:
+            char       = objs[char_uid.data]
+            char_uuid  = objs[objs[char['HAK.uuid'].data]['HAK.uuid'].data]
+            char_short = int.from_bytes(char_uuid['NS.uuidbytes'][:4], 'big')
+            if char_short != NAME_UUID_SHORT:
+                continue
+            val = char.get('HAK.value')
+            if hasattr(val, 'data'):
+                name_uid_idx = val.data
+            break
+        break
 
-    def cls_(classname: str, *parents: str) -> UID:
-        return add({'$classname': classname,
-                    '$classes':   [classname, *parents, 'NSObject']})
+    if name_uid_idx is None:
+        raise ValueError('Could not locate Name UID in template plist')
 
-    # ── Class descriptors ────────────────────────────────────────────────────
-    c_nsdict   = cls_('NSDictionary')
-    c_nsmarray = cls_('NSMutableArray', 'NSArray')
-    c_nsmstr   = cls_('NSMutableString', 'NSString')
-    c_nsdec    = cls_('NSDecimalNumberPlaceholder', 'NSDecimalNumber', 'NSNumber')
-    c_uuid     = cls_('HAKUUID')
-    c_ident    = cls_('HAKIdentifier')
-    c_pv       = cls_('HAKProtocolVersion')
-    c_ble      = cls_('HAKBTLETransport', 'HAKTransport')
-    c_ac       = cls_('HAKAccessory')
-    c_ais      = cls_('HAKAccessoryInformationService', 'HAKService')
-    c_ps       = cls_('HAKPairingService', 'HAKService')
-    c_svc      = cls_('HAKService')
-    c_idc      = cls_('HAKIdentifyCharacteristic', 'HAKCharacteristic')
-    c_char     = cls_('HAKCharacteristic')
-    c_psc      = cls_('HAKPairSetupCharacteristic', 'HAKCharacteristic')
-    c_pvc      = cls_('HAKPairVerifyCharacteristic', 'HAKCharacteristic')
-    c_pfc      = cls_('HAKPairingFeaturesCharacteristic', 'HAKCharacteristic')
-    c_pc       = cls_('HAKPairingsCharacteristic', 'HAKCharacteristic')
+    # ── Step 2: locate the object in the raw binary file ─────────────────────
+    trailer            = template_data[-32:]
+    offset_size        = trailer[6]
+    num_objects        = struct.unpack('>Q', trailer[8:16])[0]
+    offset_table_start = struct.unpack('>Q', trailer[24:32])[0]
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-    def hak_uuid(short: int) -> UID:
-        b = short.to_bytes(4, 'big') + b'\x00\x00\x10\x00\x80\x00\x00\x26\xBB\x76\x52\x91'
-        return add({'HAK.data': b, '$class': c_uuid})
+    entry_start = offset_table_start + name_uid_idx * offset_size
+    obj_pos     = int.from_bytes(
+        template_data[entry_start:entry_start + offset_size], 'big')
 
-    def hak_char(c: UID, uuid: int, fmt: int, perms: int, props: int,
-                 iid: int, value=None) -> UID:
-        d: dict = {
-            'HAK.uuid':        hak_uuid(uuid),
-            'HAK.format':      fmt,
-            'HAK.permissions': perms,
-            'HAK.properties':  props,
-            'HAK.instanceid':  iid,
-            '$class':          c,
-        }
-        if value is not None:
-            d['HAK.value'] = value
-        return add(d)
+    # ── Step 3: read existing encoded bytes; encode new name ─────────────────
+    old_enc = _bplist_read_str(template_data, obj_pos)
+    new_enc = _bplist_encode_str(new_name)
+    if old_enc == new_enc:
+        return template_data
 
-    def hak_svc(c: UID, uuid: int, iid: int, chars: list) -> UID:
-        char_arr = add({'NS.objects': chars, '$class': c_nsmarray})
-        return add({
-            'HAK.uuid':            hak_uuid(uuid),
-            'HAK.instanceid':      iid,
-            'HAK.hidden':          False,
-            'HAK.characteristics': char_arr,
-            '$class':              c,
-        })
+    delta = len(new_enc) - len(old_enc)
 
-    # Pre-allocate HAKAccessory so the BLE transport can back-reference it
-    uid_ac = reserve()
+    # ── Step 4: splice the new string into the object area ───────────────────
+    new_obj_area = (template_data[:obj_pos]
+                    + new_enc
+                    + template_data[obj_pos + len(old_enc):offset_table_start])
 
-    # ── Services ──────────────────────────────────────────────────────────────
+    # ── Step 5: rebuild offset table (shift entries after the patched object) ─
+    new_off_table = bytearray()
+    for i in range(num_objects):
+        s   = offset_table_start + i * offset_size
+        off = int.from_bytes(template_data[s:s + offset_size], 'big')
+        if off > obj_pos:
+            off += delta
+        new_off_table += off.to_bytes(offset_size, 'big')
 
-    # AccessoryInformationService (uuid 0x3E, iid 1)
-    svc_info = hak_svc(c_ais, 0x3E, 1, [
-        hak_char(c_idc,  0x14,  1,  8,  2,  2),               # Identify
-        hak_char(c_char, 0x20,  8,  4,  1,  3, 'Apple Inc.'), # Manufacturer
-        hak_char(c_char, 0x21,  8,  4,  1,  4, 'HAS-Test'),   # Model
-        hak_char(c_char, 0x23,  8,  4,  1,  5, name),          # Name  ← tile label
-        hak_char(c_char, 0x30,  8,  4,  1,  6, 'HAS-TEST-001'), # Serial
-        hak_char(c_char, 0x52,  8,  4,  1,  7, '1.0.0'),       # Firmware
-    ])
+    # ── Step 6: update the offset_table_offset field in the trailer ──────────
+    new_trailer = bytearray(trailer)
+    struct.pack_into('>Q', new_trailer, 24, offset_table_start + delta)
 
-    # PairingService (uuid 0x79, iid 8)
-    svc_pair = hak_svc(c_ps, 0x79, 8, [
-        hak_char(c_psc, 0x4C, 10,  3, 3,  9),   # PairSetup
-        hak_char(c_pvc, 0x4E, 10,  3, 3, 10),   # PairVerify
-        hak_char(c_pfc, 0x4F,  3,  1, 1, 11, 0), # PairingFeatures
-        hak_char(c_pc,  0x50, 10, 12, 3, 12),   # Pairings
-    ])
+    return bytes(new_obj_area) + bytes(new_off_table) + bytes(new_trailer)
 
-    # ProtocolInformationService (uuid 0xA2, iid 13)
-    svc_proto = hak_svc(c_svc, 0xA2, 13, [
-        hak_char(c_char, 0x37,  8,  4,  9, 14, '2.2.0'), # ServiceSignature
-        hak_char(c_char, 0xA5, 11, 12,  3, 15),           # ProtocolUUID
-    ])
 
-    # ── BLE transport ─────────────────────────────────────────────────────────
-    proto_ver = add({'HAK.major': 2, 'HAK.minor': 2, 'HAK.patch': 0,
-                     '$class': c_pv})
-    # NSDecimalNumber(1024) — BLE advertisement config; b'\x04\x00' = 0x0400 big-endian
-    config = add({
-        'NS.mantissa':    b'\x04\x00',
-        'NS.exponent':    0,
-        'NS.length':      1,
-        'NS.compact':     True,
-        'NS.negative':    False,
-        'NS.mantissa.bo': 1,
-        '$class':         c_nsdec,
-    })
-    uid_xport = add({
-        'HAK.started':                  False,
-        'HAK.state':                    1,
-        'HAK.idPool':                   2,
-        'HAK.transportVersion':         4,
-        'HAK.protocolVersion':          proto_ver,
-        'HAK.config':                   config,
-        'HAK.primaryAccessory':         uid_ac,
-        'HAK.broadcastEncryptionKey':   UID(0),
-        'HAK.AdvertisingIdentifierKey': UID(0),
-        '$class':                       c_ble,
-    })
+def _bplist_read_str(data: bytes, pos: int) -> bytes:
+    """Return the exact encoded bytes of the binary plist string object at pos."""
+    marker = data[pos]
+    typ    = marker >> 4
+    low    = marker & 0x0F
+    assert typ in (5, 6), f'Expected string object at offset {pos}, got {marker:#04x}'
+    if low < 0xF:
+        byte_count = low if typ == 5 else low * 2
+        return data[pos:pos + 1 + byte_count]
+    # Long string: marker byte, then an integer object, then chars
+    int_marker = data[pos + 1]
+    assert int_marker >> 4 == 1, f'Expected int marker at offset {pos + 1}, got {int_marker:#04x}'
+    int_bytes  = 1 << (int_marker & 0xF)   # 0x10→1, 0x11→2, 0x12→4, 0x13→8
+    char_count = int.from_bytes(data[pos + 2:pos + 2 + int_bytes], 'big')
+    byte_count = char_count if typ == 5 else char_count * 2
+    return data[pos:pos + 2 + int_bytes + byte_count]
 
-    # ── Fill HAKAccessory ─────────────────────────────────────────────────────
-    uid_ident  = add({'HAK.data': b'\x02\x00\x00\x00\x00\x01', '$class': c_ident})
-    uid_pwd    = add({'NS.string': '031-45-154', '$class': c_nsmstr})
-    uid_svcs   = add({'NS.objects': [svc_info, svc_pair, svc_proto], '$class': c_nsmarray})
-    uid_trans  = add({'NS.objects': [uid_xport], '$class': c_nsmarray})
-    uid_bridg  = add({'NS.objects': [], '$class': c_nsmarray})
 
-    fill(uid_ac, {
-        'HAK.category':           1,
-        'HAK.idPool':             16,
-        'HAK.accessoryVersion':   1,
-        'HAK.instanceid':         1,
-        'HAK.setupID':            'ABCD',
-        'HAK.bridge':             UID(0),
-        'HAK.primary':            UID(0),
-        'HAK.identifier':         uid_ident,
-        'HAK.password':           uid_pwd,
-        'HAK.services':           uid_svcs,
-        'HAK.transports':         uid_trans,
-        'HAK.bridgedAccessories': uid_bridg,
-        '$class':                 c_ac,
-    })
+def _bplist_encode_str(s: str) -> bytes:
+    """Encode a Python string as a binary plist string object."""
+    try:
+        raw  = s.encode('ascii')
+        code = 0x50
+        nc   = len(raw)
+    except UnicodeEncodeError:
+        raw  = s.encode('utf-16-be')
+        code = 0x60
+        nc   = len(s)       # char count (not byte count) for UTF-16
+    if nc < 15:
+        return bytes([code | nc]) + raw
+    # Long string: type|0xF + int-object encoding the char count + raw bytes
+    int_enc = _bplist_encode_int(nc)
+    return bytes([code | 0xF]) + int_enc + raw
 
-    # ── Root NSDictionary ─────────────────────────────────────────────────────
-    uid_root = add({
-        'NS.keys':    [add('kind'),      add('version'), add('accessory')],
-        'NS.objects': [add('accessory'), add(1),         uid_ac],
-        '$class':     c_nsdict,
-    })
 
-    return plistlib.dumps(
-        {'$version':  100000,
-         '$archiver': 'NSKeyedArchiver',
-         '$top':      {'root': uid_root},
-         '$objects':  objs},
-        fmt=plistlib.FMT_BINARY,
-        sort_keys=False,
-    )
+def _bplist_encode_int(n: int) -> bytes:
+    """Encode n as a binary plist integer object."""
+    if n < 256:
+        return bytes([0x10, n])
+    if n < 65536:
+        return bytes([0x11]) + struct.pack('>H', n)
+    if n < 2 ** 32:
+        return bytes([0x12]) + struct.pack('>I', n)
+    return bytes([0x13]) + struct.pack('>Q', n)
+
+
+def _ensure_template() -> bytes:
+    """
+    Return bytes of a valid .hasaccessory template from the HAS library.
+
+    If no .hasaccessory file exists, launches HAS briefly so it writes its
+    BLE-adapter file, then kills it and returns those bytes.
+    """
+    HAS_LIB.mkdir(parents=True, exist_ok=True)
+    existing = list(HAS_LIB.glob('*.hasaccessory'))
+    if existing:
+        return existing[0].read_bytes()
+
+    print('No .hasaccessory template found — launching HAS to create one...')
+    (HAS_LIB / 'AppState.hasstate').unlink(missing_ok=True)
+    subprocess.Popen(['open', '-a', 'HomeKit Accessory Simulator'])
+
+    for _ in range(30):
+        time.sleep(0.5)
+        files = list(HAS_LIB.glob('*.hasaccessory'))
+        if files:
+            time.sleep(1.0)                # let HAS finish writing
+            data = files[0].read_bytes()
+            subprocess.run(['pkill', '-f', 'HomeKit Accessory Simulator'],
+                           capture_output=True)
+            time.sleep(0.8)
+            print(f'  Template: {files[0].name}\n')
+            return data
+
+    subprocess.run(['pkill', '-f', 'HomeKit Accessory Simulator'], capture_output=True)
+    sys.exit('ERROR: HAS did not create a BLE adapter file within 15 s.')
 
 
 # ── HAS control helpers ───────────────────────────────────────────────────────
@@ -237,23 +247,41 @@ def _kill_has() -> None:
 
 
 def _launch_has() -> None:
+    # Remove AppState so HAS starts fresh with only the single test accessory
+    (HAS_LIB / 'AppState.hasstate').unlink(missing_ok=True)
     subprocess.Popen(['open', '-a', 'HomeKit Accessory Simulator'])
 
 
+_SWIFT_WID = r"""
+import CoreGraphics
+import Foundation
+let wins = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
+var maxArea = 0
+var mainWID = 0
+for w in wins {
+    guard let owner = w["kCGWindowOwnerName"] as? String,
+          owner.contains("HomeKit"),
+          let layer = w["kCGWindowLayer"] as? Int, layer == 0,
+          let bounds = w["kCGWindowBounds"] as? [String: Any],
+          let width  = bounds["Width"]  as? Int,
+          let height = bounds["Height"] as? Int,
+          height > 200
+    else { continue }
+    let area = width * height
+    if area > maxArea { maxArea = area; mainWID = w["kCGWindowNumber"] as? Int ?? 0 }
+}
+print(mainWID)
+"""
+
+
 def _get_has_wid() -> int:
-    """Return the CGWindowList window ID of the main HAS window (changes each session)."""
-    code = (
-        'import Quartz\n'
-        'wins = Quartz.CGWindowListCopyWindowInfo(\n'
-        '    Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)\n'
-        'for w in wins:\n'
-        '    if w.get("kCGWindowOwnerName") == "HomeKit Accessory Simulator":\n'
-        '        print(w["kCGWindowNumber"]); break\n'
-    )
-    out = subprocess.check_output(['python3', '-c', code]).decode().strip()
-    if not out:
-        raise ValueError('HAS window not found in CGWindowList')
-    return int(out)
+    """Return the CGWindowID of the main HAS window via CGWindowListCopyWindowInfo (Swift)."""
+    out = subprocess.check_output(['swift', '-e', _SWIFT_WID],
+                                  stderr=subprocess.DEVNULL).decode().strip()
+    wid = int(out) if out else 0
+    if wid == 0:
+        raise ValueError('HAS main window not found via CGWindowListCopyWindowInfo')
+    return wid
 
 
 def _screenshot(wid: int, path: pathlib.Path) -> None:
@@ -271,8 +299,11 @@ def main() -> None:
             '  https://developer.apple.com/download/all/'
         )
 
-    HAS_LIB.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Ensure a valid template before touching the library
+    _kill_has()
+    template = _ensure_template()
 
     # Back up any existing accessories; restored unconditionally at the end
     backup: dict[str, bytes] = {}
@@ -292,7 +323,7 @@ def main() -> None:
             # HAS BLE constraint: only ONE accessory per session
             for f in HAS_LIB.glob('*.hasaccessory'):
                 f.unlink()
-            (HAS_LIB / f'{tile}.hasaccessory').write_bytes(_build_hasaccessory(tile))
+            (HAS_LIB / f'{tile}.hasaccessory').write_bytes(_patch_name(template, tile))
 
             _launch_has()
 
@@ -339,8 +370,9 @@ def main() -> None:
     if failed:
         print(f'Failed: {failed}')
         sys.exit(1)
-    print('Open each image and confirm the tile name shown in HAS matches exactly.')
-    print('These names are what the iOS Home app displays via the HAP protocol.')
+    print('Open each image and confirm the main AC tile name shown in HAS matches exactly.')
+    print('For secondary service labels (Swing, Fan Auto, H-Swing, Humidity) run the HAP pipeline:')
+    print('  docker compose -f docker-compose.test.yml up --build homebridge-test hap-verify')
 
 
 if __name__ == '__main__':
