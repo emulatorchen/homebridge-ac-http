@@ -3,7 +3,7 @@ import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import { AcHttpAccessory } from './accessory.js';
 import type { AcHttpPlatformConfig, AcDeviceConfig, AcTemplateConfig, AcTemplateEntry } from './types.js';
 
-function substituteVars(obj: unknown, vars: Record<string, string>): unknown {
+export function substituteVars(obj: unknown, vars: Record<string, string>): unknown {
   if (typeof obj === 'string') return obj.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
   if (Array.isArray(obj))      return obj.map(v => substituteVars(v, vars));
   if (obj && typeof obj === 'object')
@@ -13,7 +13,7 @@ function substituteVars(obj: unknown, vars: Record<string, string>): unknown {
   return obj;
 }
 
-function resolveTemplate(cfg: AcDeviceConfig, templates: Record<string, AcTemplateConfig>): AcDeviceConfig {
+export function resolveTemplate(cfg: AcDeviceConfig, templates: Record<string, AcTemplateConfig>): AcDeviceConfig {
   if (!cfg.template) return cfg;
   const tpl = templates[cfg.template];
   if (!tpl) return cfg;
@@ -38,16 +38,6 @@ export class AcHttpPlatform implements DynamicPlatformPlugin {
   }
 
   configureAccessory(accessory: PlatformAccessory): void { this.accessories.set(accessory.UUID, accessory); }
-
-  registerCompanion(uuid: string, name: string): PlatformAccessory {
-    this.seen.add(uuid);
-    const existing = this.accessories.get(uuid);
-    if (existing) return existing;
-    const acc = new this.api.platformAccessory(name, uuid);
-    this.accessories.set(uuid, acc);
-    this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [acc]);
-    return acc;
-  }
 
   private discoverDevices(): void {
     this.seen.clear();

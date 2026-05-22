@@ -25,7 +25,7 @@
 
 | Homebridge | Node.js | Status     |
 |------------|---------|------------|
-| 1.6.x – 1.x | >= 18  | Supported  |
+| 1.6.x – 1.x | >= 20  | Supported  |
 | 2.0.x       | >= 22  | Supported  |
 
 ## What it looks like in HomeKit
@@ -259,7 +259,7 @@ Each accessory inherits everything from the template. You can override any indiv
 | `templates`   | array  | —       | Shared AC model configs. Each entry needs a `name` field. |
 | `accessories` | array  | —       | List of AC accessories. |
 
-### Accessory / Template
+### Accessory
 
 | Field          | Type    | Default | Description |
 |----------------|---------|---------|-------------|
@@ -267,14 +267,18 @@ Each accessory inherits everything from the template. You can override any indiv
 | `serial`       | string  | —        | Stable UUID seed. Strongly recommended. |
 | `model`        | string  | —        | Shown in accessory info. |
 | `template`     | string  | —        | Inherit from a named template. |
-| `host`         | string  | —        | Replaces `{host}` in template URLs. |
-| `port`         | integer | 80       | Replaces `{port}` in template URLs. |
+| `host`         | string  | —        | IP address or hostname of this AC unit. Replaces `{host}` in template URLs. |
+| `port`         | integer | 80       | Port of this AC unit. Replaces `{port}` in template URLs. |
 | `stateUrl`     | string  | —        | Fallback GET URL for characteristics with no own `get.url`. |
 | `pollInterval` | integer | 30       | State refresh interval in seconds. 0 = disabled. |
 | `setterDelay`  | integer | 0        | Debounce ms for SET commands. Useful for sliders. |
 | `minTemp`      | integer | 16       | Minimum HomeKit target temperature (°C). |
 | `maxTemp`      | integer | 30       | Maximum HomeKit target temperature (°C). |
 | `command`      | object  | —        | Composed command (IR mode). See above. |
+
+### Template
+
+Templates support the same fields as accessories **except** `name` (used as the template key), `serial`, `model`, `template`, `host`, and `port` — those belong on each AC unit. Put `{host}` and `{port}` as placeholders in URLs; each accessory supplies the real values.
 
 ### Endpoint Config (used in per-characteristic `get`/`set`)
 

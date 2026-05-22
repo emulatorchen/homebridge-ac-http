@@ -107,29 +107,28 @@ jobs:
     name: HAP verify on Homebridge ${{ matrix.hb-version }}.x
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Verify all companion tile names via real HAP pairing (HB ${{ matrix.hb-version }}.x)
+      - name: Verify main AC tile names via real HAP pairing (HB ${{ matrix.hb-version }}.x)
         run: |
           docker compose -f docker-compose.test.yml up \
             --build --abort-on-container-exit --exit-code-from ${{ matrix.service }} \
             ${{ matrix.bridge }} ${{ matrix.service }} 2>&1 | tee ${{ matrix.log }} || true
-          # English accessory
+          # Main AC tiles
           grep -F "TILE: Living Room MAXE AC" ${{ matrix.log }}
-          grep -F "TILE: Living Room MAXE AC Fan Auto" ${{ matrix.log }}
-          grep -F "TILE: Living Room MAXE AC Swing" ${{ matrix.log }}
-          grep -F "TILE: Living Room MAXE AC H-Swing" ${{ matrix.log }}
-          grep -F "TILE: Living Room MAXE AC Humidity" ${{ matrix.log }}
-          # ja accessory — proves Japanese labels flow through HAP end-to-end
           grep -F "TILE: リビングエアコン" ${{ matrix.log }}
-          grep -F "TILE: リビングエアコン 自動" ${{ matrix.log }}
-          grep -F "TILE: リビングエアコン スイング" ${{ matrix.log }}
-          grep -F "TILE: リビングエアコン 水平スイング" ${{ matrix.log }}
-          grep -F "TILE: リビングエアコン 湿度" ${{ matrix.log }}
-          # zh-TW accessory — proves Traditional Chinese labels flow through HAP end-to-end
           grep -F "TILE: 客廳冷氣" ${{ matrix.log }}
-          grep -F "TILE: 客廳冷氣 自動" ${{ matrix.log }}
-          grep -F "TILE: 客廳冷氣 擺風" ${{ matrix.log }}
-          grep -F "TILE: 客廳冷氣 水平擺風" ${{ matrix.log }}
-          grep -F "TILE: 客廳冷氣 濕度" ${{ matrix.log }}
+          # Linked service labels — secondary services live inside the AC panel
+          grep -F "LINKED: Living Room MAXE AC Fan Auto" ${{ matrix.log }}
+          grep -F "LINKED: Living Room MAXE AC Swing" ${{ matrix.log }}
+          grep -F "LINKED: Living Room MAXE AC H-Swing" ${{ matrix.log }}
+          grep -F "LINKED: Living Room MAXE AC Humidity" ${{ matrix.log }}
+          grep -F "LINKED: リビングエアコン 自動" ${{ matrix.log }}
+          grep -F "LINKED: リビングエアコン スイング" ${{ matrix.log }}
+          grep -F "LINKED: リビングエアコン 水平スイング" ${{ matrix.log }}
+          grep -F "LINKED: リビングエアコン 湿度" ${{ matrix.log }}
+          grep -F "LINKED: 客廳冷氣 自動" ${{ matrix.log }}
+          grep -F "LINKED: 客廳冷氣 擺風" ${{ matrix.log }}
+          grep -F "LINKED: 客廳冷氣 水平擺風" ${{ matrix.log }}
+          grep -F "LINKED: 客廳冷氣 濕度" ${{ matrix.log }}
       - name: Cleanup
         if: always()
         run: docker compose -f docker-compose.test.yml down -v

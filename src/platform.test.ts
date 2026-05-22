@@ -9,7 +9,8 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 import path from 'path';
-import { AcHttpPlatform } from './platform.js';
+import { AcHttpPlatform, resolveTemplate, substituteVars } from './platform.js';
+import type { AcDeviceConfig, AcTemplateConfig } from './types.js';
 const req = createRequire(import.meta.url);
 // hap-nodejs is @homebridge/hap-nodejs on HB 2.x, hap-nodejs on HB 1.x
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,6 +55,72 @@ function getName(acc: typeof PlatformAccessory): string {
     .getService(Service.AccessoryInformation)
     ?.getCharacteristic(Characteristic.Name)?.value as string;
 }
+
+// ── Template resolution — host/port belong to the accessory, not the template ─
+describe('resolveTemplate — host is accessory-only, not a template field', () => {
+  const template: AcTemplateConfig = {
+    command: {
+      url: 'http://{host}/api/send',
+      method: 'POST',
+      body: '{"power":"{active}"}',
+    },
+    minTemp: 16,
+    maxTemp: 30,
+  };
+  const templates = { 'my-model': template };
+
+  it('{host} placeholder in template URL is replaced with accessory host', () => {
+    const cfg: AcDeviceConfig = { name: 'Living Room AC', template: 'my-model', host: '192.168.1.10' };
+    const resolved = resolveTemplate(cfg, templates);
+    expect(resolved.command?.url).toBe('http://192.168.1.10/api/send');
+  });
+
+  it('{port} placeholder is replaced with accessory port (default 80)', () => {
+    const tpl: AcTemplateConfig = { stateUrl: 'http://{host}:{port}/status' };
+    const cfg: AcDeviceConfig = { name: 'AC', template: 't', host: '10.0.0.5' };
+    const resolved = resolveTemplate(cfg, { t: tpl });
+    expect(resolved.stateUrl).toBe('http://10.0.0.5:80/status');
+  });
+
+  it('{port} uses explicit accessory port when set', () => {
+    const tpl: AcTemplateConfig = { stateUrl: 'http://{host}:{port}/status' };
+    const cfg: AcDeviceConfig = { name: 'AC', template: 't', host: '10.0.0.5', port: 8080 };
+    const resolved = resolveTemplate(cfg, { t: tpl });
+    expect(resolved.stateUrl).toBe('http://10.0.0.5:8080/status');
+  });
+
+  it('accessory field overrides same field in template', () => {
+    const tpl: AcTemplateConfig = { minTemp: 16, maxTemp: 30 };
+    const cfg: AcDeviceConfig = { name: 'AC', template: 't', host: '10.0.0.1', maxTemp: 28 };
+    const resolved = resolveTemplate(cfg, { t: tpl });
+    expect(resolved.maxTemp).toBe(28);
+  });
+
+  it('returns cfg unchanged when no template is referenced', () => {
+    const cfg: AcDeviceConfig = { name: 'AC', host: '10.0.0.1' };
+    expect(resolveTemplate(cfg, templates)).toBe(cfg);
+  });
+
+  it('returns cfg unchanged when referenced template does not exist', () => {
+    const cfg: AcDeviceConfig = { name: 'AC', template: 'unknown' };
+    expect(resolveTemplate(cfg, templates)).toBe(cfg);
+  });
+
+  it('substituteVars leaves unknown placeholders untouched', () => {
+    expect(substituteVars('http://{host}/{unknown}', { host: '1.2.3.4' }))
+      .toBe('http://1.2.3.4/{unknown}');
+  });
+
+  it('AcTemplateConfig type does not include host or port (compile-time enforcement)', () => {
+    // This test documents the type-level invariant: if the line below compiled
+    // with host/port it would mean the types drifted. TypeScript enforces this
+    // at build time; the runtime check here is a canary.
+    const t: AcTemplateConfig = { minTemp: 16 };
+    // @ts-expect-error — host is not a valid template field
+    const _withHost = { ...t, host: '1.2.3.4' } satisfies AcTemplateConfig;
+    expect(t).not.toHaveProperty('host');
+  });
+});
 
 // ── HAP name chain proof ──────────────────────────────────────────────────────
 // Pins the two source-level facts that guarantee labels appear in iOS:
@@ -113,11 +180,11 @@ describe('label persistence guarantees', () => {
     const config = { platform: 'AcHttpPlatform', accessories: [{ name: 'Living Room MAXE AC', serial: 'MAXE-001', pollInterval: 0, swingVertical: { stateless: true } }] };
     const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
 
-    // First boot — registers main + companion
+    // First boot — registers main accessory only (secondary services are linked, not separate)
     const platform1 = new AcHttpPlatform(log as never, config as never, api as never);
     launchCb!();
     const firstBoot = [...registered];
-    expect(firstBoot.length).toBe(2); // main + swing companion
+    expect(firstBoot.length).toBe(1); // main accessory only
 
     // Simulate restart: Homebridge calls configureAccessory for each cached accessory
     registered.length = 0;
@@ -126,12 +193,12 @@ describe('label persistence guarantees', () => {
     for (const acc of firstBoot) platform2.configureAccessory(acc as never); // restore from cache
     launchCb!();
 
-    // On restart, companions already exist in cache — registerPlatformAccessories NOT called again
+    // On restart, main accessory already exists in cache — registerPlatformAccessories NOT called again
     expect(registered.length).toBe(0);
   });
 });
 
-describe('platform integration — companion accessory tile labels', () => {
+describe('platform integration — accessory registration', () => {
   const BASE_CONFIG = {
     accessories: [{
       name: 'Living Room MAXE AC',
@@ -144,55 +211,17 @@ describe('platform integration — companion accessory tile labels', () => {
     }],
   };
 
-  it('registers the main AC accessory with correct name', () => {
+  it('registers exactly 1 accessory per AC device (secondary services are linked, not separate)', () => {
     const { registered } = makeFakeApi(BASE_CONFIG);
-    const main = registered.find(a => getName(a) === 'Living Room MAXE AC');
-    expect(main).toBeDefined();
+    expect(registered.length).toBe(1);
   });
 
-  it('registers a Swing companion with correct AccessoryInformation.Name', () => {
+  it('registers the main AC accessory with correct AccessoryInformation.Name', () => {
     const { registered } = makeFakeApi(BASE_CONFIG);
-    const swing = registered.find(a => getName(a) === 'Living Room MAXE AC Swing');
-    expect(swing).toBeDefined();
-    expect(getName(swing!)).toBe('Living Room MAXE AC Swing');
+    expect(getName(registered[0])).toBe('Living Room MAXE AC');
   });
 
-  it('registers a Fan Auto companion with correct AccessoryInformation.Name', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    const fa = registered.find(a => getName(a) === 'Living Room MAXE AC Fan Auto');
-    expect(fa).toBeDefined();
-    expect(getName(fa!)).toBe('Living Room MAXE AC Fan Auto');
-  });
-
-  it('registers an H-Swing companion with correct AccessoryInformation.Name', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    const hs = registered.find(a => getName(a) === 'Living Room MAXE AC H-Swing');
-    expect(hs).toBeDefined();
-    expect(getName(hs!)).toBe('Living Room MAXE AC H-Swing');
-  });
-
-  it('registers a Humidity companion with correct AccessoryInformation.Name', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    const hum = registered.find(a => getName(a) === 'Living Room MAXE AC Humidity');
-    expect(hum).toBeDefined();
-    expect(getName(hum!)).toBe('Living Room MAXE AC Humidity');
-  });
-
-  it('registers exactly 5 accessories total (1 main + 4 companions)', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    expect(registered.length).toBe(5);
-  });
-
-  it('companion names contain the AC name as prefix', () => {
-    const { registered } = makeFakeApi(BASE_CONFIG);
-    const companions = registered.filter(a => getName(a) !== 'Living Room MAXE AC');
-    expect(companions.length).toBe(4);
-    for (const acc of companions) {
-      expect(getName(acc)).toMatch(/^Living Room MAXE AC /);
-    }
-  });
-
-  it('two ACs produce independent companions with correct names', () => {
+  it('two ACs produce exactly 2 registered accessories', () => {
     const config = {
       accessories: [
         { name: 'Living Room AC', serial: 'AC-001', pollInterval: 0, swingVertical: { stateless: true } },
@@ -200,7 +229,8 @@ describe('platform integration — companion accessory tile labels', () => {
       ],
     };
     const { registered } = makeFakeApi(config);
-    expect(registered.find(a => getName(a) === 'Living Room AC Swing')).toBeDefined();
-    expect(registered.find(a => getName(a) === 'Bedroom AC Swing')).toBeDefined();
+    expect(registered.length).toBe(2);
+    expect(registered.find(a => getName(a) === 'Living Room AC')).toBeDefined();
+    expect(registered.find(a => getName(a) === 'Bedroom AC')).toBeDefined();
   });
 });

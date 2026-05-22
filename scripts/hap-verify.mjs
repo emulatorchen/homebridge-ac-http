@@ -29,24 +29,33 @@ async function main() {
   console.log('=== Raw HAP /accessories response from Homebridge ===');
   console.log(JSON.stringify(result, null, 2));
 
+  const ACC_INFO_UUID    = '0000003E-0000-1000-8000-0026BB765291';
+  const HEATER_COOL_UUID = '000000BC-0000-1000-8000-0026BB765291';
+  const NAME_UUID        = '00000023-0000-1000-8000-0026BB765291';
+
   console.log('\n=== Tile labels (AccessoryInformation.Name, HAP char 0x23) ===');
   for (const acc of result.accessories) {
-    const infoSvc = acc.services.find(
-      s => s.type === '0000003E-0000-1000-8000-0026BB765291'
-    );
+    const infoSvc = acc.services.find(s => s.type === ACC_INFO_UUID);
     if (!infoSvc) continue;
-    const nameChar = infoSvc.characteristics.find(
-      c => c.type === '00000023-0000-1000-8000-0026BB765291'
-    );
+    const nameChar = infoSvc.characteristics.find(c => c.type === NAME_UUID);
     if (nameChar?.value) console.log('  TILE:', nameChar.value);
   }
 
-  // Step 3 — write test: send On=false to every Switch companion
+  console.log('\n=== Linked service labels (service-level Name, HAP char 0x23) ===');
+  for (const acc of result.accessories) {
+    for (const svc of acc.services) {
+      if (svc.type === ACC_INFO_UUID || svc.type === HEATER_COOL_UUID) continue;
+      const nameChar = svc.characteristics.find(c => c.type === NAME_UUID);
+      if (nameChar?.value) console.log('  LINKED:', nameChar.value);
+    }
+  }
+
+  // Step 3 — write test: send On=false to every Switch service
   // Proves onSet handlers are wired (unregistered handlers make tiles unresponsive in iOS).
-  // Writing false is a safe no-op for all stateless/stateful Switch companions.
+  // Writing false is a safe no-op for all stateless/stateful Switch services.
   const SWITCH_UUID = '00000049-0000-1000-8000-0026BB765291';
   const ON_UUID     = '00000025-0000-1000-8000-0026BB765291';
-  console.log('\n=== Switch write test (proves companion onSet handlers are wired) ===');
+  console.log('\n=== Switch write test (proves linked service onSet handlers are wired) ===');
   let writeCount = 0;
   for (const acc of result.accessories) {
     for (const svc of acc.services) {
@@ -75,10 +84,10 @@ async function main() {
     }
   }
   if (writeCount === 0) {
-    console.error('No writable Switch On characteristics found — companion services may be missing');
+    console.error('No writable Switch On characteristics found — linked services may be missing');
     process.exit(1);
   }
-  console.log(`\nWrite test PASSED — ${writeCount} companion Switch handler(s) responded.`);
+  console.log(`\nWrite test PASSED — ${writeCount} linked Switch handler(s) responded.`);
 
   console.log('\nVerification complete — these are the exact names iOS reads via HAP.');
   await client.close();
