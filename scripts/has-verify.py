@@ -76,13 +76,16 @@ def _patch_name(template_data: bytes, new_name: str) -> bytes:
     producing a structurally different file that HAS rejects as corrupted).
 
     Strategy:
-      1. Parse with plistlib (read-only) to locate the Name string's object
-         index in the NSKeyedArchiver $objects table.
-      2. Use the binary plist offset table to find the exact byte position of
+      1. Parse with plistlib (read-only) to locate the Name string's UID index
+         in the NSKeyedArchiver $objects table.
+      2. Navigate the binary $objects NSArray to translate that UID index into
+         the actual binary-plist object index (they differ because plistlib
+         resolves UID refs when building the Python list).
+      3. Use the binary plist offset table to find the exact byte position of
          that object in the raw file.
-      3. Read the existing encoded bytes directly from the file (no encoding
+      4. Read the existing encoded bytes directly from the file (no encoding
          assumption) and replace them with the new name's encoding.
-      4. Shift all offset-table entries that point past the replaced bytes,
+      5. Shift all offset-table entries that point past the replaced bytes,
          and update the offset-table pointer in the trailer.
 
     Everything outside the replaced string bytes is byte-identical to the
@@ -122,15 +125,57 @@ def _patch_name(template_data: bytes, new_name: str) -> bytes:
     if name_uid_idx is None:
         raise ValueError('Could not locate Name UID in template plist')
 
-    # ── Step 2: locate the object in the raw binary file ─────────────────────
+    # ── Step 2: read binary plist header values ───────────────────────────────
     trailer            = template_data[-32:]
     offset_size        = trailer[6]
+    ref_size           = trailer[7]
     num_objects        = struct.unpack('>Q', trailer[8:16])[0]
+    top_object         = struct.unpack('>Q', trailer[16:24])[0]
     offset_table_start = struct.unpack('>Q', trailer[24:32])[0]
 
-    entry_start = offset_table_start + name_uid_idx * offset_size
-    obj_pos     = int.from_bytes(
-        template_data[entry_start:entry_start + offset_size], 'big')
+    def _read_offset(idx: int) -> int:
+        s = offset_table_start + idx * offset_size
+        return int.from_bytes(template_data[s:s + offset_size], 'big')
+
+    def _read_ref(pos: int) -> int:
+        return int.from_bytes(template_data[pos:pos + ref_size], 'big')
+
+    def _parse_count(pos: int):
+        """Return (count, data_start) for an array or dict marker at pos."""
+        low = template_data[pos] & 0xF
+        if low < 0xF:
+            return low, pos + 1
+        int_m      = template_data[pos + 1]
+        int_bytes  = 1 << (int_m & 0xF)
+        count      = int.from_bytes(template_data[pos + 2:pos + 2 + int_bytes], 'big')
+        return count, pos + 2 + int_bytes
+
+    # ── Step 3: walk the binary root dict to find the $objects NSArray ────────
+    # name_uid_idx is a plistlib UID index (into the NSKeyedArchiver $objects
+    # NSArray), NOT a binary-plist object index.  To get the binary object index
+    # we must locate the NSArray in the raw file and read element name_uid_idx.
+    root_pos          = _read_offset(top_object)
+    root_count, root_data = _parse_count(root_pos)
+    objects_arr_bin_idx: int | None = None
+    for i in range(root_count):
+        k_idx   = _read_ref(root_data + i * ref_size)
+        v_idx   = _read_ref(root_data + (root_count + i) * ref_size)
+        k_pos   = _read_offset(k_idx)
+        k_m     = template_data[k_pos]
+        if k_m >> 4 == 5 and (k_m & 0xF) < 0xF:          # short ASCII string
+            k_str = template_data[k_pos + 1:k_pos + 1 + (k_m & 0xF)].decode('ascii', 'ignore')
+            if k_str == '$objects':
+                objects_arr_bin_idx = v_idx
+                break
+
+    if objects_arr_bin_idx is None:
+        raise ValueError('Could not locate $objects NSArray in binary plist root dict')
+
+    # ── Step 4: read element name_uid_idx from the NSArray ────────────────────
+    arr_pos           = _read_offset(objects_arr_bin_idx)
+    _arr_count, arr_data = _parse_count(arr_pos)
+    string_bin_idx    = _read_ref(arr_data + name_uid_idx * ref_size)
+    obj_pos           = _read_offset(string_bin_idx)
 
     # ── Step 3: read existing encoded bytes; encode new name ─────────────────
     old_enc = _bplist_read_str(template_data, obj_pos)
