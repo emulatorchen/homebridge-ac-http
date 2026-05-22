@@ -8,13 +8,19 @@
  */
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
+import path from 'path';
 import { AcHttpPlatform } from './platform.js';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { Accessory: HapAccessory } = require('@homebridge/hap-nodejs');
-import { Service, Characteristic, HAPStatus, HapStatusError, uuid } from '@homebridge/hap-nodejs';
-
 const req = createRequire(import.meta.url);
-const { PlatformAccessory } = req('../node_modules/homebridge/dist/platformAccessory.js');
+// hap-nodejs is @homebridge/hap-nodejs on HB 2.x, hap-nodejs on HB 1.x
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let hapMod: any;
+try { hapMod = req('@homebridge/hap-nodejs'); } catch { hapMod = req('hap-nodejs'); }
+const { Accessory: HapAccessory, Service, Characteristic, HAPStatus, HapStatusError, uuid } = hapMod;
+// platformAccessory.js lives next to homebridge's main entry (dist/ on HB 2.x, lib/ on HB 1.x)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const { PlatformAccessory } = req(
+  path.join(path.dirname(req.resolve('homebridge')), 'platformAccessory.js')
+) as any;
 
 function makeFakeApi(config: object) {
   const registered: typeof PlatformAccessory[] = [];
@@ -60,7 +66,6 @@ function getName(acc: typeof PlatformAccessory): string {
 // If either library changes this behavior these tests will fail before shipping.
 describe('HAP name chain — AccessoryInformation.Name is set from PlatformAccessory name', () => {
   it('hap.Accessory constructor sets AccessoryInformation.Name from displayName arg (hap-nodejs Accessory.js:241)', () => {
-    const { Accessory: HapAccessory } = require('@homebridge/hap-nodejs');
     const acc = new HapAccessory('My Label', uuid.generate('chain-test'));
     const name = acc.getService(Service.AccessoryInformation)
       ?.getCharacteristic(Characteristic.Name)?.value;

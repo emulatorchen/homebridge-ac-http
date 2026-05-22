@@ -1,0 +1,52 @@
+{
+  "bridge": {
+    "name": "AC Test Bridge",
+    "username": "AA:BB:CC:DD:EE:FF",
+    "port": 51826,
+    "pin": "031-45-154",
+    "advertiser": "bonjour-hap"
+  },
+  "accessories": [],
+  "platforms": [
+    {
+      "platform": "AcHttpPlatform",
+      "name": "AC HTTP",
+      "accessories": [
+        {
+          "name": "Living Room MAXE AC",
+          "serial": "MAXE-001",
+          "pollInterval": 0,
+          "swingVertical": { "stateless": true },
+          "swingHorizontal": { "stateless": true },
+          "currentRelativeHumidity": { "get": { "url": "http://127.0.0.1:9999/humidity" } },
+          "rotationSpeed": { "autoSwitch": true }
+        },
+        {
+          "name": "リビングエアコン",
+          "serial": "MAXE-002",
+          "language": "ja",
+          "pollInterval": 0,
+          "swingVertical": { "stateless": true },
+          "swingHorizontal": { "stateless": true },
+          "currentRelativeHumidity": { "get": { "url": "http://127.0.0.1:9999/humidity" } },
+          "rotationSpeed": { "autoSwitch": true }
+        },
+        {
+          "name": "客廳冷氣",
+          "serial": "MAXE-003",
+          "language": "zh-TW",
+          "pollInterval": 0,
+          "swingVertical": { "stateless": true },
+          "swingHorizontal": { "stateless": true },
+          "currentRelativeHumidity": { "get": { "url": "http://127.0.0.1:9999/humidity" } },
+          "rotationSpeed": { "autoSwitch": true }
+        }
+      ]
+    },
+    {
+      "platform": "config",
+      "name": "Config",
+      "port": 8582
+    }
+  ]
+}

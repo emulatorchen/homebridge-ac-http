@@ -1,0 +1,38 @@
+# node:22-slim → sha256:7af03b14a13c8cdd38e45058fd957bf00a72bbe17feac43b1c15a689c029c732
+# node:18-slim → sha256:f9ab18e354e6855ae56ef2b290dd225c1e51a564f87584b9bd21dd651838830e
+ARG NODE_SHA=sha256:7af03b14a13c8cdd38e45058fd957bf00a72bbe17feac43b1c15a689c029c732
+FROM node@${NODE_SHA}
+
+ARG HB_VERSION=2
+ARG CONFIG_FILE=docker-test-config.json
+
+# Install avahi for mDNS (HomeKit discovery) and build tools
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      avahi-daemon avahi-utils libavahi-compat-libdnssd-dev dbus \
+      libatomic1 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Homebridge and Config UI globally
+RUN npm install -g homebridge@${HB_VERSION} homebridge-config-ui-x --unsafe-perm
+
+# Build plugin against the correct HB version types
+WORKDIR /tmp/plugin
+COPY package*.json tsconfig.json config.schema.json ./
+COPY src/ ./src/
+RUN npm install --ignore-scripts && \
+    npm install homebridge@^${HB_VERSION} --no-save --ignore-scripts && \
+    npx tsc
+
+RUN npm install -g /tmp/plugin --unsafe-perm
+
+# Test config
+RUN mkdir -p /homebridge
+COPY docker-test-config.json docker-test-config-v1.json /tmp/configs/
+RUN cp /tmp/configs/${CONFIG_FILE} /homebridge/config.json
+WORKDIR /homebridge
+
+# Start dbus + avahi, then run Homebridge directly
+CMD dbus-daemon --system --fork && \
+    avahi-daemon --daemonize --no-chroot 2>/dev/null || true && \
+    homebridge -D -U /homebridge

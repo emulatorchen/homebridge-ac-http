@@ -52,11 +52,17 @@ All tiles belong to the same accessory and appear together in the accessory deta
 
 ## Install
 
+**Homebridge UI (easiest)** — open the Homebridge web interface, go to the **Plugins** tab, search for `homebridge-ac-http`, and click Install. Restart Homebridge when prompted.
+
+**Command line** — run this on the machine where Homebridge is installed:
+
 ```bash
-npm install -g homebridge-ac-http
+sudo npm install -g homebridge-ac-http
 ```
 
-Or install via the Homebridge UI plugin search.
+Then restart Homebridge.
+
+**Adding to your config** — after installing, go to the Homebridge UI config editor and add a platform block. The easiest way is to copy one of the examples below and fill in your AC's IP address. If you prefer to edit `config.json` directly, add the `AcHttpPlatform` block alongside any other platforms you have.
 
 ## Quick Start
 
@@ -321,3 +327,41 @@ Add your plugin config via the Homebridge UI on first run.
 - Physical remote desync is unavoidable with IR.
 - Swing state tracked in memory — resets on Homebridge restart for stateless configs.
 - Fan-only and Dry modes: map to HomeKit Auto (0) via `map.mode` or document separately.
+
+## Visual Verification with HomeKit Accessory Simulator
+
+The CI pipeline proves tile names via the HAP protocol (the same request the iPhone makes when it pairs). For visual confirmation of how the tiles look in Apple's own rendering, there is a local script that runs the same checks inside [HomeKit Accessory Simulator](https://developer.apple.com/download/all/) (HAS) — Apple's desktop tool for testing HomeKit accessories.
+
+**This only works on macOS and is not part of CI.**
+
+### What it checks
+
+The script shows each of the 5 tiles in HAS one at a time and saves a screenshot:
+
+| Tile | Service type |
+|------|-------------|
+| Living Room MAXE AC | HeaterCooler |
+| Living Room MAXE AC Fan Auto | Switch |
+| Living Room MAXE AC Swing | Switch |
+| Living Room MAXE AC H-Swing | Switch |
+| Living Room MAXE AC Humidity | Humidity Sensor |
+
+Seeing all 5 as separate items proves the companion-accessory pattern is working. If any tile is missing or shows the wrong name, you have found a regression.
+
+### Setup
+
+Install **Additional Tools for Xcode** from [developer.apple.com/download/all](https://developer.apple.com/download/all/) — HomeKit Accessory Simulator is inside that package. No other setup needed; the script builds its own test files from scratch.
+
+### Run
+
+```bash
+python3 scripts/has-verify.py
+```
+
+Screenshots are saved to `docs/has-screenshots/`. Open each one and confirm the name shown in HAS matches the table above.
+
+```bash
+python3 scripts/has-verify.py /tmp/my-shots   # custom output folder
+```
+
+The script backs up your existing HAS accessories before running and restores them when it finishes.
