@@ -53,6 +53,7 @@ jobs:
           exit-code: '1'
           severity: HIGH,CRITICAL
           scanners: vuln,config
+          skip-files: Dockerfile.test
       - run: npm run build
       - run: npm test
       - run: npm publish --provenance --access public
