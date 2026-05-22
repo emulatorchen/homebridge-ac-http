@@ -844,6 +844,41 @@ describe('MAXE command — every button sends the correct payload', () => {
     await sh(heater.getCharacteristic(Characteristic.Active))(1);
     expect(lastCmd()).toEqual({ mode: 'cool', temp: 18, fan: 5, swing: false, hswing: false, power_off: false });
   });
+
+  // ── Accumulated state → power off → button ────────────────────────────────
+  // AC was running (cool, 26°C, fan 3); user powers off; then taps swing/hswing.
+  // The accumulated state (cool/26/3) must be carried in the post-off command.
+  it('[seq] active=1 → cool → 26°C → fan=60% → active=0 → swing tap: full state + power_off:true + swing:true', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(26);
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(60);
+    await sh(heater.getCharacteristic(Characteristic.Active))(0);
+    mockAxios.mockClear();
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toEqual({ mode: 'cool', temp: 26, fan: 3, swing: true, hswing: false, power_off: true });
+  });
+  it('[seq] cool → 26°C → fan=60% → active=0 → swing tap → mode change: swing resets, state carries', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(26);
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(60);
+    await sh(heater.getCharacteristic(Characteristic.Active))(0);
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(1);
+    expect(lastCmd()).toEqual({ mode: 'heat', temp: 26, fan: 3, swing: false, hswing: false, power_off: true });
+  });
+  it('[seq] active=1 → cool → 26°C → fan=60% → active=0 → hswing ON: state carries + power_off:true', async () => {
+    await sh(heater.getCharacteristic(Characteristic.Active))(1);
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(26);
+    await sh(heater.getCharacteristic(Characteristic.RotationSpeed))(60);
+    await sh(heater.getCharacteristic(Characteristic.Active))(0);
+    mockAxios.mockClear();
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd()).toEqual({ mode: 'cool', temp: 26, fan: 3, swing: false, hswing: true, power_off: true });
+  });
 });
 
 // ── MAXE command: every button in power-off state (active=0) ─────────────────
