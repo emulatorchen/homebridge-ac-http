@@ -564,7 +564,7 @@ describe('MAXE command — every button sends the correct payload', () => {
     await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
     expect(lastCmd().temp).toBe(24);
   });
-  it('temp 30°C → temp:30', async () => {
+  it('temp midC → temp:30', async () => {
     await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(30);
     expect(lastCmd().temp).toBe(30);
   });
@@ -843,5 +843,248 @@ describe('MAXE command — every button sends the correct payload', () => {
     mockAxios.mockClear();
     await sh(heater.getCharacteristic(Characteristic.Active))(1);
     expect(lastCmd()).toEqual({ mode: 'cool', temp: 18, fan: 5, swing: false, hswing: false, power_off: false });
+  });
+});
+
+// ── Stateful vswing and hswing (no stateless:true) ────────────────────────────
+// Stateful swing persists in state so subsequent commands carry the last set
+// value — this is intentionally different from stateless (one-shot) swing.
+// Dedup protection: same-value sets are silently dropped (no HTTP call).
+
+const STATEFUL_SWING_CFG = {
+  name: MAXE_AC,
+  pollInterval: 0,
+  command: {
+    url: MAXE_URL,
+    method: 'POST' as const,
+    body: '{"mode":"{mode}","temp":{temperature},"fan":{fanSpeed},"swing":{swingVertical},"hswing":{swingHorizontal},"power_off":{active}}',
+    map: {
+      active:          { '0': 'true',  '1': 'false' },
+      mode:            { '0': 'auto',  '1': 'heat',  '2': 'cool' },
+      fanSpeed:        { '0': 'auto',  '20': '1', '40': '2', '60': '3', '80': '4', '100': '5' },
+      swingVertical:   { '0': 'false', '1': 'true' },
+      swingHorizontal: { '0': 'false', '1': 'true' },
+    },
+  },
+  coolingThresholdTemperature: {},
+  // NOTE: no stateless:true — these are stateful (persistent) switches
+  swingVertical:   {},
+  swingHorizontal: {},
+};
+
+function makeStatefulSwingAcc() {
+  const hapAcc = new Accessory(MAXE_AC, uuid.generate(`sf-swing-${Math.random()}`));
+  const mp = {
+    log: { warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() },
+    Service, Characteristic,
+    api: { hap: { HapStatusError, HAPStatus, uuid } },
+  };
+  const ma = {
+    context: { config: STATEFUL_SWING_CFG },
+    getService:    (a: unknown) => hapAcc.getService(a as never),
+    addService:    (...a: unknown[]) => (hapAcc.addService as never)(...a),
+    removeService: (s: unknown) => hapAcc.removeService(s as Service),
+    get services() { return hapAcc.services; },
+  };
+  new AcHttpAccessory(mp as never, ma as never);
+  return hapAcc;
+}
+
+describe('stateful vswing / hswing — persistent state and dedup', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let hapAcc: any, heater: Service, vswing: Service, hswing: Service;
+
+  beforeEach(() => {
+    mockAxios.mockClear();
+    hapAcc  = makeStatefulSwingAcc();
+    heater  = hapAcc.services.find((s: Service) => s.UUID === Service.HeaterCooler.UUID);
+    vswing  = hapAcc.services.find((s: Service) => s.subtype === 'vswing');
+    hswing  = hapAcc.services.find((s: Service) => s.subtype === 'hswing');
+  });
+
+  // ── Stateful vswing ───────────────────────────────────────────────────────
+  it('vswing ON (0→1) → swing:true', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().swing).toBe(true);
+  });
+  it('vswing OFF (1→0) → swing:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);   // ON first
+    mockAxios.mockClear();
+    await sh(vswing.getCharacteristic(Characteristic.On))(false);  // then OFF
+    expect(lastCmd().swing).toBe(false);
+  });
+  it('vswing dedup: same value (false→false) → no command sent', async () => {
+    // state starts at 0 (false); setting false again is deduped
+    await sh(vswing.getCharacteristic(Characteristic.On))(false);
+    expect(mockAxios.mock.calls.length).toBe(0);
+  });
+  it('vswing dedup: same value (true→true) → no command sent', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);   // set to true
+    mockAxios.mockClear();
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);   // same value
+    expect(mockAxios.mock.calls.length).toBe(0);
+  });
+  it('stateful vswing ON persists: subsequent temp change carries swing:true', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
+    // Intentional: stateful swing should persist (unlike stateless which resets)
+    expect(lastCmd()).toMatchObject({ swing: true, temp: 24 });
+  });
+  it('stateful vswing OFF resets: subsequent temp change carries swing:false', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    await sh(vswing.getCharacteristic(Characteristic.On))(false);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
+    expect(lastCmd()).toMatchObject({ swing: false, temp: 24 });
+  });
+
+  // ── Stateful hswing ───────────────────────────────────────────────────────
+  it('hswing ON (0→1) → hswing:true', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().hswing).toBe(true);
+  });
+  it('hswing OFF (1→0) → hswing:false', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(hswing.getCharacteristic(Characteristic.On))(false);
+    expect(lastCmd().hswing).toBe(false);
+  });
+  it('hswing dedup: same value (false→false) → no command sent', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(false);
+    expect(mockAxios.mock.calls.length).toBe(0);
+  });
+  it('hswing dedup: same value (true→true) → no command sent', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    expect(mockAxios.mock.calls.length).toBe(0);
+  });
+  it('stateful hswing ON persists: subsequent mode change carries hswing:true', async () => {
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.TargetHeaterCoolerState))(2);
+    expect(lastCmd()).toMatchObject({ hswing: true, mode: 'cool' });
+  });
+
+  // ── Stateful vswing + hswing together ────────────────────────────────────
+  it('vswing ON + hswing ON: both carried in subsequent command', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(22);
+    expect(lastCmd()).toMatchObject({ swing: true, hswing: true, temp: 22 });
+  });
+  it('vswing ON then OFF: hswing unaffected', async () => {
+    await sh(vswing.getCharacteristic(Characteristic.On))(true);
+    await sh(hswing.getCharacteristic(Characteristic.On))(true);
+    await sh(vswing.getCharacteristic(Characteristic.On))(false);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
+    expect(lastCmd()).toMatchObject({ swing: false, hswing: true });
+  });
+});
+
+// ── Swing modes (stateless + discrete positions via radio switches) ───────────
+// Swing modes represent named positions (e.g. "Off", "mid", "wide").
+// Tapping a mode sends that index as swingVertical in the command and deselects
+// the others (radio button behaviour). Tapping the selected mode does nothing.
+
+const SWING_MODES_CFG = {
+  name: MAXE_AC,
+  pollInterval: 0,
+  command: {
+    url: MAXE_URL,
+    method: 'POST' as const,
+    body: '{"mode":"{mode}","temp":{temperature},"fan":{fanSpeed},"swing":{swingVertical},"hswing":{swingHorizontal},"power_off":{active}}',
+    map: {
+      active:          { '0': 'true',  '1': 'false' },
+      mode:            { '0': 'auto',  '1': 'heat',  '2': 'cool' },
+      fanSpeed:        { '0': 'auto',  '20': '1', '40': '2', '60': '3', '80': '4', '100': '5' },
+      swingVertical:   { '0': 'off', '1': 'mid', '2': 'wide' },
+      swingHorizontal: { '0': 'false', '1': 'true' },
+    },
+  },
+  coolingThresholdTemperature: {},
+  swingVertical:   { stateless: true, modes: ['Off', 'mid', 'wide'] },
+  swingHorizontal: { stateless: true },
+};
+
+function makeSwingModesAcc() {
+  const hapAcc = new Accessory(MAXE_AC, uuid.generate(`sm-${Math.random()}`));
+  const mp = {
+    log: { warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() },
+    Service, Characteristic,
+    api: { hap: { HapStatusError, HAPStatus, uuid } },
+  };
+  const ma = {
+    context: { config: SWING_MODES_CFG },
+    getService:    (a: unknown) => hapAcc.getService(a as never),
+    addService:    (...a: unknown[]) => (hapAcc.addService as never)(...a),
+    removeService: (s: unknown) => hapAcc.removeService(s as Service),
+    get services() { return hapAcc.services; },
+  };
+  new AcHttpAccessory(mp as never, ma as never);
+  return hapAcc;
+}
+
+describe('swing modes (stateless radio buttons) — each mode sends correct swing value', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let hapAcc: any, heater: Service, mode0: Service, mode1: Service, mode2: Service;
+
+  beforeEach(() => {
+    mockAxios.mockClear();
+    hapAcc = makeSwingModesAcc();
+    heater = hapAcc.services.find((s: Service) => s.UUID === Service.HeaterCooler.UUID);
+    mode0  = hapAcc.services.find((s: Service) => s.subtype === 'swing-mode-0');
+    mode1  = hapAcc.services.find((s: Service) => s.subtype === 'swing-mode-1');
+    mode2  = hapAcc.services.find((s: Service) => s.subtype === 'swing-mode-2');
+  });
+
+  it('all three swing-mode services registered', () => {
+    expect(mode0).toBeDefined();
+    expect(mode1).toBeDefined();
+    expect(mode2).toBeDefined();
+  });
+  it('mode 0 (Off) tap → swing:"off" in command', async () => {
+    // State starts at 0, so select mode 1 first to change state, then select mode 0
+    await sh(mode1.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(mode0.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().swing).toBe('off');
+  });
+  it('mode 1 (mid) tap → swing:"mid" in command', async () => {
+    await sh(mode1.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().swing).toBe('mid');
+  });
+  it('mode 2 (wide) tap → swing:"wide" in command', async () => {
+    await sh(mode2.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().swing).toBe('wide');
+  });
+  it('radio deselect (v=false) → no command, snaps back', async () => {
+    await sh(mode1.getCharacteristic(Characteristic.On))(true);  // select 1
+    mockAxios.mockClear();
+    await sh(mode1.getCharacteristic(Characteristic.On))(false); // deselect → snap back
+    expect(mockAxios.mock.calls.length).toBe(0);
+  });
+  it('mode 1 → mode 2: command has swing:"wide"', async () => {
+    await sh(mode1.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(mode2.getCharacteristic(Characteristic.On))(true);
+    expect(lastCmd().swing).toBe('wide');
+  });
+  it('mode selection persists: after mode 2, temp change carries swing:"wide"', async () => {
+    await sh(mode2.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
+    // Modes (radio buttons) persist like stateful swing — the selected mode stays
+    expect(lastCmd()).toMatchObject({ swing: 'wide', temp: 24 });
+  });
+  it('mode 2 → mode 0: subsequent temp change has swing:"off"', async () => {
+    await sh(mode2.getCharacteristic(Characteristic.On))(true);
+    await sh(mode0.getCharacteristic(Characteristic.On))(true);
+    mockAxios.mockClear();
+    await sh(heater.getCharacteristic(Characteristic.CoolingThresholdTemperature))(24);
+    expect(lastCmd()).toMatchObject({ swing: 'off', temp: 24 });
   });
 });
