@@ -6,7 +6,7 @@ import type { EndpointConfig } from './types.js';
 const _httpAgent  = new http.Agent({ keepAlive: true, maxSockets: 1 });
 const _httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 1 });
 
-function agentFor(url: string): Pick<AxiosRequestConfig, 'httpAgent' | 'httpsAgent'> {
+export function agentFor(url: string): Pick<AxiosRequestConfig, 'httpAgent' | 'httpsAgent'> {
   return url.startsWith('https://') ? { httpsAgent: _httpsAgent } : { httpAgent: _httpAgent };
 }
 
