@@ -1,5 +1,14 @@
+import http from 'http';
+import https from 'https';
 import axios, { type AxiosRequestConfig } from 'axios';
 import type { EndpointConfig } from './types.js';
+
+const _httpAgent  = new http.Agent({ keepAlive: true, maxSockets: 1 });
+const _httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 1 });
+
+export function agentFor(url: string): Pick<AxiosRequestConfig, 'httpAgent' | 'httpsAgent'> {
+  return url.startsWith('https://') ? { httpsAgent: _httpsAgent } : { httpAgent: _httpAgent };
+}
 
 function extractJsonPath(data: unknown, path: string): string {
   const parts = path.replace(/^\$\./, '').split('.');
@@ -21,7 +30,7 @@ export function reverseMap(map: Record<string, string>): Record<string, string> 
 }
 
 export async function httpGet(cfg: EndpointConfig): Promise<number> {
-  const options: AxiosRequestConfig = { timeout: cfg.timeout ?? 5000, headers: cfg.headers };
+  const options: AxiosRequestConfig = { timeout: cfg.timeout ?? 5000, headers: cfg.headers, ...agentFor(cfg.url) };
   const resp   = await axios.get(cfg.url, options);
   const raw    = cfg.jsonPath ? extractJsonPath(resp.data, cfg.jsonPath) : String(resp.data);
   const mapped = applyMap(raw, cfg.valueMap);
@@ -33,7 +42,7 @@ export async function httpSet(cfg: EndpointConfig, hkValue: number | string): Pr
   const mapped = applyMap(String(hkValue), setMap);
   const body   = cfg.body ? cfg.body.replace(/\{value\}/g, mapped) : mapped;
   const method = cfg.method ?? 'POST';
-  const options: AxiosRequestConfig = { timeout: cfg.timeout ?? 5000, headers: cfg.headers };
+  const options: AxiosRequestConfig = { timeout: cfg.timeout ?? 5000, headers: cfg.headers, ...agentFor(cfg.url) };
   if (method === 'GET' || method === 'DELETE') {
     const sep = cfg.url.includes('?') ? '&' : '?';
     await axios({ method, url: `${cfg.url}${sep}value=${encodeURIComponent(mapped)}`, ...options });

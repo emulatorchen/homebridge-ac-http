@@ -1,7 +1,7 @@
 import type { PlatformAccessory, Service, CharacteristicValue, Logger } from 'homebridge';
 import type { AcHttpPlatform } from './platform.js';
 import type { AcDeviceConfig, EndpointConfig } from './types.js';
-import { httpGet, httpSet, applyMap } from './http-client.js';
+import { httpGet, httpSet, applyMap, agentFor } from './http-client.js';
 import { getLabels } from './i18n.js';
 import axios from 'axios';
 
@@ -272,7 +272,7 @@ export class AcHttpAccessory {
     let parsedBody: unknown = safeBody;
     try { parsedBody = JSON.parse(safeBody); } catch { /* send as string */ }
     try {
-      await axios({ method: cmd.method ?? 'POST', url: cmd.url, data: parsedBody, headers: cmd.headers, timeout: cmd.timeout ?? 5000 });
+      await axios({ method: cmd.method ?? 'POST', url: cmd.url, data: parsedBody, headers: cmd.headers, timeout: cmd.timeout ?? 5000, ...agentFor(cmd.url) });
     } catch (err) {
       this.log.error(`[${this.cfg.name}] Command failed:`, (err as Error).message);
       throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
